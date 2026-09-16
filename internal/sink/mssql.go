@@ -152,6 +152,11 @@ func (s *MSSQLSink) tableExists(ctx context.Context, t contracts.TargetTable) (b
 	return n > 0, nil
 }
 
+// DB returns the underlying *sql.DB. Used by the health server for readiness checks.
+func (s *MSSQLSink) DB() *sql.DB {
+    return s.db
+}
+
 // mapToSQLType maps canonical types (from Source.Column.DataType) to T-SQL types.
 func mapToSQLType(canonical string) string {
 	switch strings.ToLower(canonical) {
@@ -184,3 +189,4 @@ func nullability(nullable bool) string {
 	}
 	return "NOT NULL"
 }
+
