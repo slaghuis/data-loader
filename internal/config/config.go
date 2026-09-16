@@ -9,9 +9,10 @@ import (
 
 // AppConfig is the loader's own bootstrap configuration.
 type AppConfig struct {
-	MetadataDSN string // MS SQL DSN for the metadata DB
-	SinkDSN     string // MS SQL DSN for the sink DB (can be the same server, different DB)
+	MetadataDSN string
+	SinkDSN     string
 	LogLevel    string
+	LogFormat   string // "json" or "text"
 }
 
 func FromEnv() (*AppConfig, error) {
@@ -19,6 +20,7 @@ func FromEnv() (*AppConfig, error) {
 		MetadataDSN: os.Getenv("LOADER_METADATA_DSN"),
 		SinkDSN:     os.Getenv("LOADER_SINK_DSN"),
 		LogLevel:    getEnvDefault("LOADER_LOG_LEVEL", "info"),
+		LogFormat:   getEnvDefault("LOADER_LOG_FORMAT", "json"),
 	}
 	if c.MetadataDSN == "" {
 		return nil, fmt.Errorf("LOADER_METADATA_DSN is required")
