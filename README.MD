@@ -99,3 +99,25 @@ search_path. If you don't fully qualify object_name (i.e. use orders instead of 
  - **No block-read optimization.** Each tag is a separate Modbus transaction. On a slow serial-over-TCP link with 100+ tags this adds up. If it becomes a problem, we group contiguous addresses of the same register type into one read — happy to add when needed.
  - ** No reconnect logic on total link failure.**  If the TCP connection dies (not just individual reads), the next full run will fail. The scheduler retries on the next tick, which reopens the client — so this self-heals within one polling interval. Explicit reconnect-in-place could be added if intervals get long.
  - ** No per-tag polling frequency.**  All tags in a load share one cron schedule. If you need "read temperature every 60s but pressure every 1s", create two loads.
+
+## OPC-UA Source Loader
+### Design Notes Worth Understanding
+**Why batch reads instead of per-node calls?** OPC-UA's Read service accepts N nodes in one round-trip. For 100 tags at 5-second polling, this is the difference between 100 network round-trips every 5 seconds and 1. The library handles this natively and the server does too.
+**Why prefer SourceTimestamp over the poll time?** When a well-behaved OPC-UA server reports SourceTimestamp, that's the actual moment the sensor produced the value — sometimes seconds before the poll if the value hasn't changed. This is far more accurate than "when I read it". If the server doesn't provide one, we fall back to ServerTimestamp, then to poll time.
+**Why qualityFromStatus and not just dv.Status == StatusOK?** OPC-UA status codes are bitfields. A value can be "uncertain" (which is neither good nor bad — sensor is degraded but reporting) or have specific sub-flags. Mapping to three coarse buckets (good/uncertain/bad) keeps queries simple while preserving the useful distinction.
+**Why generic assignValue with a type switch?** OPC-UA carries far more numeric types than SQL (Byte, SByte, Int16, UInt64, Float, Double, etc.). Rather than one column per type, we widen all numerics to float64. This matches the Modbus module and gives you a single value_num column downstream. If you ever have a tag that needs exact 64-bit integer precision (rare in industrial telemetry), we'd add a value_int column later.
+**Why lock a mutex around reads?** Same reason as Modbus — the underlying session is transactional. The gopcua library is safe for concurrent use, but serializing reads-per-source keeps behavior predictable and matches how Modbus works. Under the scheduler's per-load lock, contention is zero anyway.
+**Why not implement certificate auth yet?** It requires generating an application instance certificate, persisting it, and having the server trust it (usually a manual step in the server's admin UI). It's a real deployment workflow, not just a config change. Worth doing separately when a specific site needs it.
+### Testing Checklist
+1. **Free public test server:** opc.tcp://opcuademo.prosysopc.com:53530/OPCUA/SimulationServer — anonymous, no security. Great for smoke-testing.
+2. **Start with Anonymous / None / None** to confirm connectivity. Read ns=3;i=1001 (a simulated Counter on Prosys) as a first tag.
+3. **Escalate to username auth** against your actual SCADA server.
+4. **Escalate to Basic256Sha256 + SignAndEncrypt** last — this is where cert issues surface.
+5. **Kill the OPC-UA server mid-poll**. Confirm the next tick emits bad rows and the loader recovers on the tick after restart.
+6. **Poll an unknown node id (typo it)**. Confirm you get a bad row with the OPC-UA status code in value_text — not a crashed load.
+### Known Limitations (v1, deliberate)
+ - **No auto-reconnect on session expiry**. If the SCADA server closes an idle session, the next tick's Read fails, and the tick after that will try again — but the client won't auto-reopen. If you have long polling intervals (>60s) or a server with an aggressive session timeout, this could be an issue. Fix would be catching BadSessionIDInvalid and reopening. Add when needed.
+ - **No certificate auth**. As above.
+ - **No browsing**. You must know your node IDs. In practice mine operators use UaExpert or similar to discover them once and paste them into the seed file.
+ - **All numeric types widened to float64**. Lossy for 64-bit integers with more than ~15 significant digits. Not a real problem for sensor data.
+ - **Arrays and complex types stringified**. Fine for the occasional string array; not appropriate for streaming structured data. If you need to unpack a Struct node, that's a bespoke decoder per struct type.
