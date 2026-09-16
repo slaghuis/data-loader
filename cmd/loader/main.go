@@ -21,6 +21,7 @@ import (
 	_ "github.com/slaghuis/data-loader/internal/sources/sqlserver"
 	_ "github.com/slaghuis/data-loader/internal/sources/postgres"
 	modbussrc "github.com/slaghuis/data-loader/internal/sources/modbus"
+	opcuasrc  "github.com/slaghuis/data-loader/internal/sources/opcua"
 )
 
 func main() {
@@ -48,6 +49,7 @@ func main() {
 	repo := metadata.NewRepository(gdb)
 
 	modbussrc.SetTagRepository(repo)
+	opcuasrc.SetNodeRepository(repo)
 
 	// Upgrade the default logger to also persist to the DB.
 	baseHandler := slog.Default().Handler()
