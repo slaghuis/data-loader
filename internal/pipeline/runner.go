@@ -9,6 +9,7 @@ import (
 	"github.com/slaghuis/data-loader/internal/config"
 	"github.com/slaghuis/data-loader/internal/logging"
 	"github.com/slaghuis/data-loader/internal/metadata"
+	"github.com/slaghuis/data-loader/internal/runstate"
 	"github.com/slaghuis/data-loader/internal/sources"
 	"github.com/slaghuis/data-loader/pkg/contracts"
 )
@@ -16,14 +17,15 @@ import (
 type Runner struct {
 	repo   *metadata.Repository
 	sink   contracts.Sink
+	state  *runstate.Registry
 	logger *slog.Logger
 }
 
-func NewRunner(repo *metadata.Repository, sink contracts.Sink, logger *slog.Logger) *Runner {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &Runner{repo: repo, sink: sink, logger: logger}
+func NewRunner(repo *metadata.Repository, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger) *Runner {
+    if logger == nil {
+        logger = slog.Default()
+    }
+    return &Runner{repo: repo, sink: sink, state: state, logger: logger}
 }
 
 func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
@@ -95,6 +97,7 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 		"mode", load.Mode,
 		"watermark_start", current.Value,
 	)
+	r.state.MarkRunning(load.ID, run.RunUUID, run.StartedAt)
 
 	// 4. Prepare handler.
 	target := contracts.TargetTable{Schema: load.TargetSchema, Name: load.TargetTable}
@@ -149,7 +152,9 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 	}
 	result, err := src.Read(ctx, loadCfg, handler)
 	if err != nil {
+		// Failure path
 		_ = r.repo.FinishRun(ctx, run, "failed", result.RowsRead, rowsWritten, current.Value, err.Error())
+		r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), result.RowsRead, rowsWritten, err.Error())
 		log.Error("load failed",
 			"category", "read",
 			"err", err,
@@ -174,10 +179,12 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 	}
 
 	// 7. Finish.
+	// Success path
 	if err := r.repo.FinishRun(ctx, run, "success", result.RowsRead, rowsWritten, newWMValue, ""); err != nil {
-		log.Error("finish run", "category", "read", "err", err)
-		return err
+    	r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), result.RowsRead, rowsWritten, err.Error())
+    	return err
 	}
+	r.state.MarkFinished(load.ID, "success", time.Now().UTC(), result.RowsRead, rowsWritten, "")
 	log.Info("load complete",
 		"category", "read",
 		"rows_read", result.RowsRead,
