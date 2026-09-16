@@ -100,3 +100,31 @@ type LogEntry struct {
 }
 
 func (LogEntry) TableName() string { return "meta_log_entries" }
+
+// Modbus TCP metadata
+// ModbusTag defines a single register mapping for a Modbus load.
+type ModbusTag struct {
+	ID           int64  `gorm:"primaryKey;autoIncrement"`
+	LoadID       int64  `gorm:"not null;index"`
+
+	TagName      string `gorm:"size:200;not null"`
+
+	// Modbus addressing
+	UnitID       uint8  `gorm:"not null;default:1"`     // slave/unit ID
+	RegisterType string `gorm:"size:20;not null"`       // coil | discrete | holding | input
+	Address      uint16 `gorm:"not null"`               // 0-based register address
+	Quantity     uint16 `gorm:"not null;default:1"`     // 1 for bool/int16, 2 for int32/float32, 4 for float64
+
+	// Decoding
+	DataType     string  `gorm:"size:20;not null"`      // bool | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64
+	ByteOrder    string  `gorm:"size:10;not null;default:big"`     // big | little
+	WordOrder    string  `gorm:"size:10;not null;default:high_first"` // high_first | low_first (for 32/64-bit values)
+
+	// Scaling: value = (raw * Scale) + Offset
+	Scale        float64 `gorm:"not null;default:1"`
+	Offset       float64 `gorm:"not null;default:0"`
+
+	IsEnabled    bool    `gorm:"not null;default:1"`
+}
+
+func (ModbusTag) TableName() string { return "meta_modbus_tags" }
