@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
 	"github.com/robfig/cron/v3"
@@ -13,36 +14,51 @@ type Scheduler struct {
 	cron    *cron.Cron
 	repo    *metadata.Repository
 	runner  *pipeline.Runner
+	logger  *slog.Logger
 	entries map[int64]cron.EntryID
 	running map[int64]bool
 	mu      sync.Mutex
 }
 
-func New(repo *metadata.Repository, runner *pipeline.Runner) *Scheduler {
+func New(repo *metadata.Repository, runner *pipeline.Runner, logger *slog.Logger) *Scheduler {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Scheduler{
 		cron:    cron.New(),
 		repo:    repo,
 		runner:  runner,
+		logger:  logger,
 		entries: map[int64]cron.EntryID{},
 		running: map[int64]bool{},
 	}
 }
 
-// Load reads all enabled loads and registers their schedules.
 func (s *Scheduler) Load(ctx context.Context) error {
 	loads, err := s.repo.ListEnabledLoads(ctx)
 	if err != nil {
 		return err
 	}
 	for _, ld := range loads {
-		ld := ld // capture
-		id, err := s.cron.AddFunc(ld.CronExpression, func() {
-			s.trigger(ld)
-		})
+		ld := ld
+		id, err := s.cron.AddFunc(ld.CronExpression, func() { s.trigger(ld) })
 		if err != nil {
+			s.logger.Error("register schedule",
+				"category", "schedule",
+				"load_id", ld.ID,
+				"load_name", ld.Name,
+				"cron", ld.CronExpression,
+				"err", err,
+			)
 			return err
 		}
 		s.entries[ld.ID] = id
+		s.logger.Info("schedule registered",
+			"category", "schedule",
+			"load_id", ld.ID,
+			"load_name", ld.Name,
+			"cron", ld.CronExpression,
+		)
 	}
 	return nil
 }
@@ -51,7 +67,12 @@ func (s *Scheduler) trigger(load metadata.Load) {
 	s.mu.Lock()
 	if s.running[load.ID] {
 		s.mu.Unlock()
-		return // skip overlapping run
+		s.logger.Warn("skipping overlapping run",
+			"category", "schedule",
+			"load_id", load.ID,
+			"load_name", load.Name,
+		)
+		return
 	}
 	s.running[load.ID] = true
 	s.mu.Unlock()
@@ -62,8 +83,10 @@ func (s *Scheduler) trigger(load metadata.Load) {
 		s.mu.Unlock()
 	}()
 
-	ctx := context.Background()
-	_ = s.runner.Execute(ctx, load)
+	if err := s.runner.Execute(context.Background(), load); err != nil {
+		// The runner already logged specifics; nothing to add here.
+		_ = err
+	}
 }
 
 func (s *Scheduler) Start() { s.cron.Start() }
