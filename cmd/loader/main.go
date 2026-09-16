@@ -17,6 +17,7 @@ import (
 	"github.com/slaghuis/data-loader/internal/logging"
 	"github.com/slaghuis/data-loader/internal/metadata"
 	"github.com/slaghuis/data-loader/internal/pipeline"
+	"github.com/slaghuis/data-loader/internal/reload"
 	"github.com/slaghuis/data-loader/internal/runstate"
 	"github.com/slaghuis/data-loader/internal/scheduler"
 	"github.com/slaghuis/data-loader/internal/sink"
@@ -98,6 +99,16 @@ func main() {
         	os.Exit(1)
     	}
 	}
+	
+	// Metadata reload coordinator
+	var reloader *reload.Coordinator
+	if cfg.ReloadEnabled {
+    	reloader = reload.New(sch, reload.Config{
+        	Interval:  time.Duration(cfg.ReloadIntervalSec) * time.Second,
+        	HandleHUP: cfg.ReloadOnSIGHUP,
+    	}, appLogger)
+    	reloader.Start()
+	}
 
 	// Housekeeping
 	var hk *housekeeping.Housekeeper
@@ -121,9 +132,11 @@ func main() {
 	<-sigs
 	appLogger.Info("shutdown signal received")
 
+	if reloader != nil {
+    	reloader.Stop()
+	}
 	sch.Stop()
 	if hk != nil {
-    	// Wait up to 30s for an in-flight sweep to finish.
     	stopCtx := hk.Stop()
     	select {
     	case <-stopCtx.Done():
