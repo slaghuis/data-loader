@@ -1,5 +1,23 @@
 # Edge Data Loader
 
+## Where the Loader Stands Now
+Every one of your original requirements is now implemented, plus:
+ - Structured JSON logging (console + DB)
+ - Overlap-safe scheduling
+ - Health/readiness/status HTTP endpoints
+ - Automatic retention/housekeeping
+ - Hot-reloadable metadata (SIGHUP + periodic)
+
+This is a proper operational tool. Enjoy the shakedown period — a couple of days of real polling on a real mine will surface exactly the things that no design conversation can predict. Keep an eye on:
+ - meta_log_entries row count over 48 hours to confirm housekeeping keeps up.
+ - /status after intentional network blips to make sure error messages are useful and recovery is clean.
+ - Load run durations — anything drifting upward is a smell.
+ - Modbus/OPC-UA quality: bad rates — spikes are a network or PLC concern, not a loader concern, but the loader should be reporting them faithfully.
+
+
+Next step
+Cloud sync (metadata down, logs up), but this needs to be designed thoughtfully — it's the most architecturally consequential feature left on the roadmap.
+
 ## Design Notes
  - Why strings for watermark values? It keeps the schema simple and portable across watermark types (datetime, bigint, decimal). The WatermarkType on Load tells the source module how to parse/compare it. Trade-off: slight parsing overhead per run — negligible.
  - Why ParamsJSON instead of columns per source type? Each source module needs different config (SQL: server/db/user; Modbus: host/port/unit-id; OPC-UA: endpoint/security policy). JSON keeps the schema stable while allowing modules to evolve independently. The module owns the schema of its params.
@@ -29,6 +47,11 @@ export LOADER_LOG_RETENTION_DAYS=14
 export LOADER_LOAD_RUN_RETENTION_DAYS=90
 export LOADER_HOUSEKEEPING_BATCH_SIZE=5000
 export LOADER_HOUSEKEEPING_BATCH_PAUSE_MS=100
+export LOADER_HEALTH_ENABLED=true
+export LOADER_HEALTH_ADDR=127.0.0.1:9090
+export LOADER_RELOAD_ENABLED=true
+export LOADER_RELOAD_INTERVAL_SEC=60     # 0 to disable periodic reload
+export LOADER_RELOAD_ON_SIGHUP=true
 go run ./cmd/loader
 ```
 
@@ -128,3 +151,119 @@ search_path. If you don't fully qualify object_name (i.e. use orders instead of 
  - **No browsing**. You must know your node IDs. In practice mine operators use UaExpert or similar to discover them once and paste them into the seed file.
  - **All numeric types widened to float64**. Lossy for 64-bit integers with more than ~15 significant digits. Not a real problem for sensor data.
  - **Arrays and complex types stringified**. Fine for the occasional string array; not appropriate for streaming structured data. If you need to unpack a Struct node, that's a bespoke decoder per struct type.
+
+## Health Monitor
+Use it like so
+```
+$ curl -s http://127.0.0.1:9090/healthz
+{
+  "status": "ok",
+  "uptime_seconds": 143
+}
+
+$ curl -s http://127.0.0.1:9090/readyz
+{
+  "metadata": "ok",
+  "sink": "ok",
+  "status": "ok"
+}
+
+$ curl -s http://127.0.0.1:9090/status | jq
+{
+  "version": "dev",
+  "go_version": "go1.22.3",
+  "started_at": "2024-06-10T08:15:22Z",
+  "uptime_seconds": 143,
+  "summary": {
+    "total_loads": 3,
+    "running": 0,
+    "last_success": 2,
+    "last_failed": 1
+  },
+  "loads": [
+    {
+      "load_id": 1,
+      "load_name": "erp.orders",
+      "source_name": "erp-prod",
+      "source_kind": "sqlserver",
+      "cron_expression": "@every 5m",
+      "last_run_uuid": "7c1e...",
+      "last_started_at": "2024-06-10T08:17:00Z",
+      "last_finished_at": "2024-06-10T08:17:01Z",
+      "last_status": "success",
+      "last_rows_read": 42,
+      "last_rows_written": 42,
+      "currently_running": false
+    },
+    {
+      "load_id": 2,
+      "load_name": "crusher.telemetry",
+      "source_name": "crusher-plc",
+      "source_kind": "modbus",
+      "cron_expression": "@every 10s",
+      "last_status": "failed",
+      "last_error": "open modbus client: dial tcp 10.0.10.55:502: i/o timeout",
+      "currently_running": false
+    }
+  ]
+}
+```
+
+### systemd Integration
+Now that the endpoint exists, your unit file can use it. Example `/etc/systemd/system/data-loader.service`:
+```
+[Unit]
+Description=Mine Data Loader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=data-loader
+EnvironmentFile=/etc/data-loader/environment
+ExecStart=/opt/data-loader/loader
+Restart=on-failure
+RestartSec=10
+
+# Health check via systemd watchdog is out of scope here, but
+# an external monitoring probe on http://127.0.0.1:9090/readyz
+# is the intended integration.
+
+[Install]
+WantedBy=multi-user.target
+```
+For monitoring integration (Prometheus Blackbox, uptime-kuma, etc.), point at /readyz and treat any non-200 as an alert.
+
+## Metadata Hot-Reload
+Adding a new load
+```
+# Seed the new load via your seed CLI or SQL
+./seed --file new-load.yaml
+
+# Trigger reload immediately (optional — periodic will catch it within 60s)
+sudo systemctl kill --signal=SIGHUP data-loader.service
+# or:
+kill -HUP $(pgrep data-loader)
+```
+
+Expected log line within seconds:
+```
+{"level":"INFO","msg":"SIGHUP received — reloading","category":"schedule"}
+{"level":"INFO","msg":"metadata reload complete","category":"schedule","total_loads":4,"added":[7],"removed":[],"updated":[]}
+```
+Disabling a load:
+```
+UPDATE meta_loads SET is_enabled = 0 WHERE name = 'crusher.telemetry';
+```
+Next reload:
+```
+{"level":"INFO","msg":"metadata reload complete","category":"schedule","total_loads":3,"added":[],"removed":[2],"updated":[]}
+```
+Changing a schedule:
+```
+UPDATE meta_loads SET cron_expression = '@every 30s' WHERE name = 'mill.telemetry';
+```
+next reload
+```
+{"level":"INFO","msg":"metadata reload complete","category":"schedule","total_loads":3,"added":[],"removed":[],"updated":[3]}
+```
