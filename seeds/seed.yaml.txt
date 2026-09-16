@@ -1,0 +1,24 @@
+sources:
+  - name: erp-prod
+    kind: sqlserver
+    description: ERP production DB
+    params:
+      server: 10.0.0.5
+      database: ERP
+      user: reader
+      password: $env:ERP_PW
+    enabled: true
+
+loads:
+  - source: erp-prod
+    name: erp.orders
+    object_name: dbo.Orders
+    target_schema: dbo
+    target_table: erp_orders
+    mode: delta
+    watermark_column: ModifiedAt
+    watermark_type: datetime
+    batch_size: 1000
+    auto_create_table: true
+    cron_expression: "@every 5m"
+    enabled: true
