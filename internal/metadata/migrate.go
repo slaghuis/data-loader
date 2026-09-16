@@ -11,5 +11,6 @@ func AutoMigrate(db *gorm.DB) error {
 		&LoadRun{},
 		&LogEntry{},
 		&ModbusTag{},
+		&OPCUANode{},
 	)
 }
