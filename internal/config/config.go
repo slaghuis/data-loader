@@ -25,6 +25,11 @@ type AppConfig struct {
 	// Health server
 	HealthEnabled  bool
     HealthAddr     string
+
+	// Metadata reload
+	ReloadEnabled       bool
+	ReloadIntervalSec   int   // 0 = disabled, periodic reload off
+	ReloadOnSIGHUP      bool
 }
 
 func FromEnv() (*AppConfig, error) {
@@ -42,6 +47,10 @@ func FromEnv() (*AppConfig, error) {
 		HousekeepingBatchPauseMs: getEnvInt("LOADER_HOUSEKEEPING_BATCH_PAUSE_MS", 100),
 		HealthEnabled: 			  getEnvBool("LOADER_HEALTH_ENABLED", true),
 		HealthAddr:    			  getEnvDefault("LOADER_HEALTH_ADDR", "127.0.0.1:9090"),
+
+		ReloadEnabled:     getEnvBool("LOADER_RELOAD_ENABLED", true),
+		ReloadIntervalSec: getEnvInt("LOADER_RELOAD_INTERVAL_SEC", 60),
+		ReloadOnSIGHUP:    getEnvBool("LOADER_RELOAD_ON_SIGHUP", true),
 	}
 	if c.MetadataDSN == "" {
 		return nil, fmt.Errorf("LOADER_METADATA_DSN is required")
