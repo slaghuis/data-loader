@@ -20,6 +20,7 @@ import (
 
 	_ "github.com/slaghuis/data-loader/internal/sources/sqlserver"
 	_ "github.com/slaghuis/data-loader/internal/sources/postgres"
+	modbussrc "github.com/slaghuis/data-loader/internal/sources/modbus"
 )
 
 func main() {
@@ -45,6 +46,8 @@ func main() {
 		os.Exit(1)
 	}
 	repo := metadata.NewRepository(gdb)
+
+	modbussrc.SetTagRepository(repo)
 
 	// Upgrade the default logger to also persist to the DB.
 	baseHandler := slog.Default().Handler()
