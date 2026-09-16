@@ -16,7 +16,7 @@
 
 For production-quality seeding, don't blindly insert. Use MERGE or check existence first:
 
-'
+`
 IF NOT EXISTS (
    SELECT 1
    FROM meta\_sources
@@ -25,11 +25,11 @@ IF NOT EXISTS (
 BEGIN
    INSERT ...
 END
-'
+`
 
 or
 
-'
+`
 MERGE meta\_sources AS target
 USING (
    SELECT @p1 AS name
@@ -37,13 +37,14 @@ USING (
 ON target.name = source.name
 WHEN NOT MATCHED THEN
    INSERT (...);
-'
+`
 
 ### RUN
 
-'export DB\_CONNECTION="sqlserver://user:password@host:1433?database=mydb"'
-
-'go run ./cmd/seed -file seeds/seed.yaml'
+`
+export DB\_CONNECTION="sqlserver://user:password@host:1433?database=mydb"
+go run ./cmd/seed -file seeds/seed.yaml
+`
 
 
 This gives you a reusable seeding mechanism where new sources and loads can be added simply by editing YAML instead of changing Go code.
