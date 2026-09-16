@@ -1,0 +1,26 @@
+sources:
+  - name: mes-prod
+    kind: postgres
+    description: MES production DB (Postgres)
+    params:
+      host: 10.0.0.42
+      port: "5432"
+      database: mes
+      user: reader
+      password: $env:MES_PW
+      sslmode: require
+      search_path: public
+
+loads:
+  - source: mes-prod
+    name: mes.production_events
+    object_name: public.production_events
+    target_schema: dbo
+    target_table: mes_production_events
+    mode: delta
+    watermark_column: event_time
+    watermark_type: datetime
+    batch_size: 1000
+    auto_create_table: true
+    cron_expression: "@every 5m"
+    is_enabled: true
