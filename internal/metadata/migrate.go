@@ -10,5 +10,6 @@ func AutoMigrate(db *gorm.DB) error {
 		&Watermark{},
 		&LoadRun{},
 		&LogEntry{},
+		&ModbusTag{},
 	)
 }
