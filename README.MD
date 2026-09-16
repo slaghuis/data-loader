@@ -66,3 +66,15 @@ Remember, once you have seeded,
 you might have to add an environment variable with the password.
 `export MES_PW='the-actual-password'`
 
+## Postgres Source Module
+###Testing Checklist
+ - Connectivity test — create a load with mode: append against a small Postgres table first. Confirm the target table is created and rows land with yb_load_timestamp populated.
+ - Delta test — enable a watermark column, run once, insert a new row in Postgres, wait for the next tick. Only the new row should land.
+ - Type mapping test — try a table containing NUMERIC, UUID, JSONB, TIMESTAMPTZ, and BOOLEAN. All should land as NVARCHAR(MAX) / FLOAT / BIT / DATETIME2 in MS SQL. If you want native UNIQUEIDENTIFIER or NVARCHAR(36) for UUIDs later, we'd extend the sink's type mapper.
+ - SSL test — set sslmode: require against a Postgres server that enforces TLS.
+### Known Behaviors Worth Understanding
+ - NUMERIC precision loss. Postgres NUMERIC values come across as strings (via []byte) and are being stored in NVARCHAR(MAX) in the sink. This preserves precision perfectly. If you later want them as DECIMAL(p,s) in MS SQL you'd need per-column metadata — happy to add that when it becomes a real need.
+ - JSONB columns land as JSON text in NVARCHAR(MAX). MS SQL 2022+ has decent JSON support, so this is usable.
+ - TIMESTAMPTZ normalization to UTC. All timestamps are converted to UTC before storage. This matches how we already handle SQL Server datetimes. Watermark comparisons therefore always operate in UTC.
+search_path. If you don't fully qualify object_name (i.e. use orders instead of public.orders), Postgres will resolve it against the search_path you set in params. Recommendation: always fully qualify in your load config to avoid surprises.
+
