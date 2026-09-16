@@ -2,8 +2,12 @@ package metadata
 
 import (
 	"context"
+	"crypto/sha256"
+    "encoding/hex"
 	"errors"
 	"time"
+    "fmt"
+    "sort"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -204,4 +208,107 @@ func (r *Repository) pruneInBatches(ctx context.Context, sqlStmt string, batchSi
 			}
 		}
 	}
+}
+
+// MetadataFingerprint returns a stable hash over all metadata that affects
+// scheduling and execution. Cheap enough to call every minute.
+func (r *Repository) MetadataFingerprint(ctx context.Context) (string, error) {
+	type sourceFP struct {
+		ID         int64
+		Kind       string
+		ParamsJSON string
+		IsEnabled  bool
+	}
+	type loadFP struct {
+		ID              int64
+		SourceID        int64
+		CronExpression  string
+		Mode            string
+		WatermarkColumn string
+		WatermarkType   string
+		ObjectName      string
+		TargetSchema    string
+		TargetTable     string
+		BatchSize       int
+		AutoCreateTable bool
+		IsEnabled       bool
+	}
+
+	var sources []sourceFP
+	if err := r.db.WithContext(ctx).
+		Model(&Source{}).
+		Select("id, kind, params_json, is_enabled").
+		Order("id").
+		Scan(&sources).Error; err != nil {
+		return "", fmt.Errorf("fingerprint sources: %w", err)
+	}
+
+	var loads []loadFP
+	if err := r.db.WithContext(ctx).
+		Model(&Load{}).
+		Select("id, source_id, cron_expression, mode, watermark_column, watermark_type, object_name, target_schema, target_table, batch_size, auto_create_table, is_enabled").
+		Order("id").
+		Scan(&loads).Error; err != nil {
+		return "", fmt.Errorf("fingerprint loads: %w", err)
+	}
+
+	// Tag/node lists change often but only affect polling behaviour, not scheduling.
+	// We still include their row counts and per-load enabled counts so the fingerprint
+	// covers "tag added" and "tag disabled" events.
+	type tagFP struct {
+		LoadID   int64
+		Enabled  int
+		Total    int
+	}
+	var modbusRows []tagFP
+	if err := r.db.WithContext(ctx).
+		Raw(`SELECT load_id AS load_id,
+		            SUM(CASE WHEN is_enabled = 1 THEN 1 ELSE 0 END) AS enabled,
+		            COUNT(*) AS total
+		     FROM meta_modbus_tags
+		     GROUP BY load_id
+		     ORDER BY load_id`).
+		Scan(&modbusRows).Error; err != nil {
+		return "", fmt.Errorf("fingerprint modbus tags: %w", err)
+	}
+	var opcuaRows []tagFP
+	if err := r.db.WithContext(ctx).
+		Raw(`SELECT load_id AS load_id,
+		            SUM(CASE WHEN is_enabled = 1 THEN 1 ELSE 0 END) AS enabled,
+		            COUNT(*) AS total
+		     FROM meta_opcua_nodes
+		     GROUP BY load_id
+		     ORDER BY load_id`).
+		Scan(&opcuaRows).Error; err != nil {
+		return "", fmt.Errorf("fingerprint opcua nodes: %w", err)
+	}
+
+	// Sort defensively (SQL ORDER BY is authoritative but doesn't hurt).
+	sort.Slice(sources, func(i, j int) bool { return sources[i].ID < sources[j].ID })
+	sort.Slice(loads,   func(i, j int) bool { return loads[i].ID < loads[j].ID })
+	sort.Slice(modbusRows, func(i, j int) bool { return modbusRows[i].LoadID < modbusRows[j].LoadID })
+	sort.Slice(opcuaRows,  func(i, j int) bool { return opcuaRows[i].LoadID < opcuaRows[j].LoadID })
+
+	h := sha256.New()
+	fmt.Fprintf(h, "SOURCES:\n")
+	for _, s := range sources {
+		fmt.Fprintf(h, "%d|%s|%s|%v\n", s.ID, s.Kind, s.ParamsJSON, s.IsEnabled)
+	}
+	fmt.Fprintf(h, "LOADS:\n")
+	for _, l := range loads {
+		fmt.Fprintf(h, "%d|%d|%s|%s|%s|%s|%s|%s|%s|%d|%v|%v\n",
+			l.ID, l.SourceID, l.CronExpression, l.Mode,
+			l.WatermarkColumn, l.WatermarkType,
+			l.ObjectName, l.TargetSchema, l.TargetTable,
+			l.BatchSize, l.AutoCreateTable, l.IsEnabled)
+	}
+	fmt.Fprintf(h, "MODBUS:\n")
+	for _, t := range modbusRows {
+		fmt.Fprintf(h, "%d|%d|%d\n", t.LoadID, t.Enabled, t.Total)
+	}
+	fmt.Fprintf(h, "OPCUA:\n")
+	for _, t := range opcuaRows {
+		fmt.Fprintf(h, "%d|%d|%d\n", t.LoadID, t.Enabled, t.Total)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
