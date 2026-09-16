@@ -75,17 +75,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer sk.Close()
-	
+
 	// Run state registry
 	state := runstate.New()
 
-	// Runner and Scheduler now take state
+	// Pipeline & Scheduler
 	runner := pipeline.NewRunner(repo, sk, state, appLogger)
 	sch := scheduler.New(repo, runner, state, appLogger)
-
-	// Pipeline & Scheduler
-	runner := pipeline.NewRunner(repo, sk, appLogger)
-	sch := scheduler.New(repo, runner, appLogger)
 	if err := sch.Load(ctx); err != nil {
 		appLogger.Error("load schedules", "err", err)
 		os.Exit(1)

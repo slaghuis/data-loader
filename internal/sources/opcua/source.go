@@ -231,9 +231,9 @@ func qualityFromStatus(s ua.StatusCode) string {
 	switch {
 	case s == ua.StatusOK:
 		return "good"
-	case s.Has(ua.StatusBad):
+	case s == ua.StatusBad: //s.Has(ua.StatusBad):
 		return "bad"
-	case s.Has(ua.StatusUncertain):
+	case s == ua.StatusUncertain: // s.Has(ua.StatusUncertain):
 		return "uncertain"
 	default:
 		return "good"
