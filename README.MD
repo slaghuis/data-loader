@@ -59,5 +59,10 @@ export DB\_CONNECTION="sqlserver://user:password@host:1433?database=mydb"
 go run ./cmd/seed -file seeds/seed.yaml
 ```
 
-
 This gives you a reusable seeding mechanism where new sources and loads can be added simply by editing YAML instead of changing Go code.
+
+Remember, once you have seeded, 
+`go run ./cmd/seed -file seeds/mes-postgres.yaml`
+you might have to add an environment variable with the password.
+`export MES_PW='the-actual-password'`
+
