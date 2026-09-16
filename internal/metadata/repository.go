@@ -133,3 +133,13 @@ func (r *Repository) ListModbusTags(ctx context.Context, loadID int64) ([]Modbus
 		Find(&tags).Error
 	return tags, err
 }
+
+// ----------- OPC-UA -------------------
+func (r *Repository) ListOPCUANodes(ctx context.Context, loadID int64) ([]OPCUANode, error) {
+	var nodes []OPCUANode
+	err := r.db.WithContext(ctx).
+		Where("load_id = ? AND is_enabled = ?", loadID, true).
+		Order("id ASC").
+		Find(&nodes).Error
+	return nodes, err
+}
