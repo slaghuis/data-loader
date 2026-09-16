@@ -143,3 +143,65 @@ func (r *Repository) ListOPCUANodes(ctx context.Context, loadID int64) ([]OPCUAN
 		Find(&nodes).Error
 	return nodes, err
 }
+
+// -------------- Housekeeping ----------------
+// PruneLogEntries deletes log entries older than cutoff in batches.
+// Returns the total number of rows deleted.
+func (r *Repository) PruneLogEntries(ctx context.Context, cutoff time.Time, batchSize int, pauseBetweenBatches time.Duration) (int64, error) {
+	return r.pruneInBatches(ctx, `
+		DELETE TOP (@p1) FROM meta_log_entries
+		WHERE created_at < @p2
+	`, batchSize, cutoff, pauseBetweenBatches)
+}
+
+// PruneLoadRuns deletes terminal (success/failed/aborted) load runs older than cutoff.
+// Running runs are never pruned — you want to see stuck jobs.
+func (r *Repository) PruneLoadRuns(ctx context.Context, cutoff time.Time, batchSize int, pauseBetweenBatches time.Duration) (int64, error) {
+	return r.pruneInBatches(ctx, `
+		DELETE TOP (@p1) FROM meta_load_runs
+		WHERE started_at < @p2
+		  AND status IN ('success', 'failed', 'aborted')
+	`, batchSize, cutoff, pauseBetweenBatches)
+}
+
+// pruneInBatches runs a batched DELETE until zero rows are affected, honouring
+// the passed context so shutdown is prompt.
+func (r *Repository) pruneInBatches(ctx context.Context, sqlStmt string, batchSize int, cutoff time.Time, pause time.Duration) (int64, error) {
+	if batchSize <= 0 {
+		batchSize = 5000
+	}
+	sqlDB, err := r.db.DB()
+	if err != nil {
+		return 0, err
+	}
+
+	var totalDeleted int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return totalDeleted, err
+		}
+
+		res, err := sqlDB.ExecContext(ctx, sqlStmt, batchSize, cutoff)
+		if err != nil {
+			return totalDeleted, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return totalDeleted, err
+		}
+		totalDeleted += n
+
+		if n < int64(batchSize) {
+			// Last batch — nothing more to prune.
+			return totalDeleted, nil
+		}
+
+		if pause > 0 {
+			select {
+			case <-ctx.Done():
+				return totalDeleted, ctx.Err()
+			case <-time.After(pause):
+			}
+		}
+	}
+}
