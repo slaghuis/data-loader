@@ -1,4 +1,4 @@
-
+# Edge Data Loader
 
 ## Design Notes
  - Why strings for watermark values? It keeps the schema simple and portable across watermark types (datetime, bigint, decimal). The WatermarkType on Load tells the source module how to parse/compare it. Trade-off: slight parsing overhead per run — negligible.
@@ -10,7 +10,13 @@
  - No schema drift tracking — AutoCreateTable only.
  - No secrets manager integration — start with env-var references in ParamsJSON (e.g. {"password": "$env:SRC1\_PW"}).
 
-
+## Run
+```
+export LOADER_METADATA_DSN='sqlserver://user:pw@localhost?database=DataLoaderMeta'
+export LOADER_SINK_DSN='sqlserver://user:pw@localhost?database=DataLoaderSink'
+export ERP_PW='actual-password'
+go run ./cmd/loader
+```
 
 ## Seeding
 
