@@ -5,6 +5,11 @@
  - Why ParamsJSON instead of columns per source type? Each source module needs different config (SQL: server/db/user; Modbus: host/port/unit-id; OPC-UA: endpoint/security policy). JSON keeps the schema stable while allowing modules to evolve independently. The module owns the schema of its params.
  - Why a separate Watermark table (not a column on Load)? Cleaner audit trail (previous value, reset time, reset reason) and it separates config from runtime state. Config is user-owned; watermark is loader-owned.
  - Why RunUUID in addition to ID? The UUID is used for log correlation and will be safe to sync to the cloud later without primary-key collisions.
+ - Non-blocking DB writes. If the metadata DB is slow or briefly down, log records queue in a bounded channel. Once full, new records drop (console still gets them). This prevents logging from ever stalling a load.
+ - Repository.Log was left in place. Nothing that used it before breaks. But new code should prefer slog — cleaner and gives you dual output for free.
+ - Well-known attribute promotion. Keys run_uuid, load_id, source_id, category map to typed columns in meta_log_entries. Everything else falls into details as JSON. This keeps queries fast without giving up flexibility.
+ - No third-party log library. slog is standard, fast, and won't be abandoned.
+
 ## What's missing intentionally (keeping v1 lean):
  - No retry policy table yet — add later.
  - No schema drift tracking — AutoCreateTable only.
@@ -15,6 +20,8 @@
 export LOADER_METADATA_DSN='sqlserver://user:pw@localhost?database=DataLoaderMeta'
 export LOADER_SINK_DSN='sqlserver://user:pw@localhost?database=DataLoaderSink'
 export ERP_PW='actual-password'
+export LOADER_LOG_LEVEL=info      # debug | info | warn | error
+export LOADER_LOG_FORMAT=json     # json | text
 go run ./cmd/loader
 ```
 
