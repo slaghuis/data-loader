@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/slaghuis/data-loader/internal/config"
+	"github.com/slaghuis/data-loader/internal/housekeeping"
 	"github.com/slaghuis/data-loader/internal/logging"
 	"github.com/slaghuis/data-loader/internal/metadata"
 	"github.com/slaghuis/data-loader/internal/pipeline"
@@ -83,12 +84,38 @@ func main() {
 	sch.Start()
 	appLogger.Info("data-loader started")
 
+	// Housekeeping
+	var hk *housekeeping.Housekeeper
+	if cfg.HousekeepingEnabled {
+    	hk = housekeeping.New(repo, housekeeping.Config{
+        	CronExpression:       cfg.HousekeepingCron,
+        	LogRetentionDays:     cfg.LogRetentionDays,
+        	LoadRunRetentionDays: cfg.LoadRunRetentionDays,
+        	BatchSize:            cfg.HousekeepingBatchSize,
+        	BatchPause:           time.Duration(cfg.HousekeepingBatchPauseMs) * time.Millisecond,
+    	}, appLogger)
+
+    	if err := hk.Start(); err != nil {
+        	appLogger.Error("start housekeeping", "err", err)
+        	os.Exit(1)
+    	}
+	}
+
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
 	appLogger.Info("shutdown signal received")
 
 	sch.Stop()
+	if hk != nil {
+    	// Wait up to 30s for an in-flight sweep to finish.
+    	stopCtx := hk.Stop()
+    	select {
+    	case <-stopCtx.Done():
+    	case <-time.After(30 * time.Second):
+        	appLogger.Warn("housekeeping did not stop in time")
+    	}
+	}
 	dbHandler.Close(5 * time.Second)
 	appLogger.Info("data-loader stopped")
 }
