@@ -128,3 +128,21 @@ type ModbusTag struct {
 }
 
 func (ModbusTag) TableName() string { return "meta_modbus_tags" }
+
+// OPC-UA Source Loader
+// OPCUANode defines a single OPC-UA node to poll for a load.
+type OPCUANode struct {
+	ID          int64  `gorm:"primaryKey;autoIncrement"`
+	LoadID      int64  `gorm:"not null;index"`
+
+	TagName     string `gorm:"size:200;not null"`   // logical name (mine-friendly)
+	NodeID      string `gorm:"size:400;not null"`   // OPC-UA node id, e.g. "ns=2;s=Channel1.Device1.Tag"
+
+	// Scaling: value = (raw * Scale) + Offset — only applied to numeric values.
+	Scale       float64 `gorm:"not null;default:1"`
+	Offset      float64 `gorm:"not null;default:0"`
+
+	IsEnabled   bool    `gorm:"not null;default:1"`
+}
+
+func (OPCUANode) TableName() string { return "meta_opcua_nodes" }
