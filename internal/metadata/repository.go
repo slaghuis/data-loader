@@ -123,3 +123,13 @@ func (r *Repository) Log(ctx context.Context, e LogEntry) error {
 	}
 	return r.db.WithContext(ctx).Create(&e).Error
 }
+
+// ------------ Modbus TCP Tags ----------------
+func (r *Repository) ListModbusTags(ctx context.Context, loadID int64) ([]ModbusTag, error) {
+	var tags []ModbusTag
+	err := r.db.WithContext(ctx).
+		Where("load_id = ? AND is_enabled = ?", loadID, true).
+		Order("id ASC").
+		Find(&tags).Error
+	return tags, err
+}
