@@ -12,10 +12,12 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/slaghuis/data-loader/internal/config"
+	"github.com/slaghuis/data-loader/internal/health"
 	"github.com/slaghuis/data-loader/internal/housekeeping"
 	"github.com/slaghuis/data-loader/internal/logging"
 	"github.com/slaghuis/data-loader/internal/metadata"
 	"github.com/slaghuis/data-loader/internal/pipeline"
+	"github.com/slaghuis/data-loader/internal/runstate"
 	"github.com/slaghuis/data-loader/internal/scheduler"
 	"github.com/slaghuis/data-loader/internal/sink"
 
@@ -73,6 +75,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer sk.Close()
+	
+	// Run state registry
+	state := runstate.New()
+
+	// Runner and Scheduler now take state
+	runner := pipeline.NewRunner(repo, sk, state, appLogger)
+	sch := scheduler.New(repo, runner, state, appLogger)
 
 	// Pipeline & Scheduler
 	runner := pipeline.NewRunner(repo, sk, appLogger)
@@ -83,6 +92,16 @@ func main() {
 	}
 	sch.Start()
 	appLogger.Info("data-loader started")
+
+	// Health server
+	var hs *health.Server
+	if cfg.HealthEnabled {
+    	hs = health.New(cfg.HealthAddr, state, gdb, sk.DB(), "dev", appLogger)
+    	if err := hs.Start(); err != nil {
+        	appLogger.Error("start health server", "err", err)
+        	os.Exit(1)
+    	}
+	}
 
 	// Housekeeping
 	var hk *housekeeping.Housekeeper
@@ -115,6 +134,11 @@ func main() {
     	case <-time.After(30 * time.Second):
         	appLogger.Warn("housekeeping did not stop in time")
     	}
+	}
+	if hs != nil {
+    	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+    	_ = hs.Stop(shutdownCtx)
+    	cancelShutdown()
 	}
 	dbHandler.Close(5 * time.Second)
 	appLogger.Info("data-loader stopped")
