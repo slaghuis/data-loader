@@ -8,6 +8,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/slaghuis/data-loader/internal/metadata"
 	"github.com/slaghuis/data-loader/internal/pipeline"
+	"github.com/slaghuis/data-loader/internal/runstate"
 )
 
 type Scheduler struct {
@@ -15,12 +16,13 @@ type Scheduler struct {
 	repo    *metadata.Repository
 	runner  *pipeline.Runner
 	logger  *slog.Logger
+	state *runstate.Registry
 	entries map[int64]cron.EntryID
 	running map[int64]bool
 	mu      sync.Mutex
 }
 
-func New(repo *metadata.Repository, runner *pipeline.Runner, logger *slog.Logger) *Scheduler {
+func New(repo *metadata.Repository, runner *pipeline.Runner, state *runstate.Registry, logger *slog.Logger) *Scheduler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -29,6 +31,7 @@ func New(repo *metadata.Repository, runner *pipeline.Runner, logger *slog.Logger
 		repo:    repo,
 		runner:  runner,
 		logger:  logger,
+		state: state,
 		entries: map[int64]cron.EntryID{},
 		running: map[int64]bool{},
 	}
@@ -59,6 +62,13 @@ func (s *Scheduler) Load(ctx context.Context) error {
 			"load_name", ld.Name,
 			"cron", ld.CronExpression,
 		)
+		s.state.Register(runstate.LoadState{
+    		LoadID:         ld.ID,
+    		LoadName:       ld.Name,
+    		SourceName:     ld.Source.Name,
+    		SourceKind:     ld.Source.Kind,
+    		CronExpression: ld.CronExpression,
+		})
 	}
 	return nil
 }
