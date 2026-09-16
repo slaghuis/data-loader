@@ -22,6 +22,13 @@ export LOADER_SINK_DSN='sqlserver://user:pw@localhost?database=DataLoaderSink'
 export ERP_PW='actual-password'
 export LOADER_LOG_LEVEL=info      # debug | info | warn | error
 export LOADER_LOG_FORMAT=json     # json | text
+# Housekeeping (all optional; sensible defaults shown)
+export LOADER_HOUSEKEEPING_ENABLED=true
+export LOADER_HOUSEKEEPING_CRON="0 2 * * *"      # daily at 02:00
+export LOADER_LOG_RETENTION_DAYS=14
+export LOADER_LOAD_RUN_RETENTION_DAYS=90
+export LOADER_HOUSEKEEPING_BATCH_SIZE=5000
+export LOADER_HOUSEKEEPING_BATCH_PAUSE_MS=100
 go run ./cmd/loader
 ```
 
