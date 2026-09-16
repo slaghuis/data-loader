@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	"data-loader/internal/config"
-	"data-loader/internal/metadata"
-	"data-loader/internal/sources"
-	"data-loader/internal/sources/sqlserver"
-	"data-loader/pkg/contracts"
+	"github.com/slaghuis/data-loader/internal/config"
+	"github.com/slaghuis/data-loader/internal/metadata"
+	"github.com/slaghuis/data-loader/internal/sources"
+	"github.com/slaghuis/data-loader/internal/sources/sqlserver"
+	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
 type Runner struct {

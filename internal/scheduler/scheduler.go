@@ -5,8 +5,8 @@ import (
 	"sync"
 
 	"github.com/robfig/cron/v3"
-	"github.com/yourorg/data-loader/internal/metadata"
-	"github.com/yourorg/data-loader/internal/pipeline"
+	"github.com/slaghuis/data-loader/internal/metadata"
+	"github.com/slaghuis/data-loader/internal/pipeline"
 )
 
 type Scheduler struct {

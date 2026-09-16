@@ -9,8 +9,8 @@ import (
 
 	_ "github.com/microsoft/go-mssqldb"
 
-	"data-loader/internal/sources"
-	"data-loader/pkg/contracts"
+	"github.com/slaghuis/data-loader/internal/sources"
+	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
 const Kind = "sqlserver"

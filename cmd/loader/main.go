@@ -12,13 +12,13 @@ import (
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
 
-	"github.com/yourorg/data-loader/internal/config"
-	"github.com/yourorg/data-loader/internal/metadata"
-	"github.com/yourorg/data-loader/internal/pipeline"
-	"github.com/yourorg/data-loader/internal/scheduler"
-	"github.com/yourorg/data-loader/internal/sink"
+	"github.com/slaghuis/data-loader/internal/config"
+	"github.com/slaghuis/data-loader/internal/metadata"
+	"github.com/slaghuis/data-loader/internal/pipeline"
+	"github.com/slaghuis/data-loader/internal/scheduler"
+	"github.com/slaghuis/data-loader/internal/sink"
 	// Blank-import to register source modules.
-	_ "github.com/yourorg/data-loader/internal/sources/sqlserver"
+	_ "github.com/slaghuis/data-loader/internal/sources/sqlserver"
 )
 
 var _ = mssql.Driver{} // ensure driver linkage

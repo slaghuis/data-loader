@@ -11,7 +11,7 @@ import (
 	_ "github.com/microsoft/go-mssqldb"
 	"gopkg.in/yaml.v3"
 
-	"yourmodule/internal/seed"
+	"github.com/slaghuis/data-loader/internal/seed"
 )
 
 func main() {

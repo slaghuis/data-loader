@@ -1,6 +1,9 @@
 package contracts
 
-import "context"
+import (
+	"context"
+	"time"		
+	)
 
 // TargetTable identifies where data should be written.
 type TargetTable struct {
@@ -22,7 +25,7 @@ type Sink interface {
 	Truncate(ctx context.Context, target TargetTable) error
 
 	// WriteBatch inserts a batch of rows, stamping each row with loadTS.
-	WriteBatch(ctx context.Context, target TargetTable, batch Batch, loadTS ) (int64, error)
+	WriteBatch(ctx context.Context, target TargetTable, batch Batch, loadTS time.Time) (int64, error)
 
 	Close() error
 }

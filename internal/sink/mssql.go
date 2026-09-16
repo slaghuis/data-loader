@@ -12,7 +12,7 @@ import (
 	"time"
 
 	mssql "github.com/microsoft/go-mssqldb"
-	"data-loader/pkg/contracts"
+	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
 // LoadTimestampColumn is appended to every target table.

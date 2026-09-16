@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"data-loader/pkg/contracts"
+	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
 var (
