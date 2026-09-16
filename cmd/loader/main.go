@@ -19,6 +19,7 @@ import (
 	"github.com/slaghuis/data-loader/internal/sink"
 
 	_ "github.com/slaghuis/data-loader/internal/sources/sqlserver"
+	_ "github.com/slaghuis/data-loader/internal/sources/postgres"
 )
 
 func main() {
