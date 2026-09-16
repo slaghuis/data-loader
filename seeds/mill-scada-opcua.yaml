@@ -1,0 +1,43 @@
+sources:
+  - name: mill-scada
+    kind: opcua
+    description: Mill SCADA OPC-UA server
+    params:
+      endpoint: opc.tcp://scada.mine.local:4840
+      security_policy: Basic256Sha256
+      security_mode: SignAndEncrypt
+      auth: username
+      username: dataloader
+      password: $env:SCADA_PW
+      session_timeout_ms: "60000"
+      request_timeout_ms: "10000"
+
+loads:
+  - source: mill-scada
+    name: mill.telemetry
+    object_name: mill_telemetry
+    target_schema: dbo
+    target_table: mill_telemetry
+    mode: append
+    watermark_type: none
+    batch_size: 1000
+    auto_create_table: true
+    cron_expression: "@every 5s"
+    is_enabled: true
+
+opcua_nodes:
+  - load: mill.telemetry
+    tag_name: mill.feed_rate_tph
+    node_id: "ns=2;s=Mill.Feed.Rate"
+    scale: 1.0
+    offset: 0.0
+
+  - load: mill.telemetry
+    tag_name: mill.bearing_temp_c
+    node_id: "ns=2;s=Mill.Bearing.Temperature"
+    scale: 1.0
+    offset: 0.0
+
+  - load: mill.telemetry
+    tag_name: mill.running
+    node_id: "ns=2;s=Mill.State.Running"
