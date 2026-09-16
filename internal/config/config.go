@@ -4,15 +4,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
-// AppConfig is the loader's own bootstrap configuration.
 type AppConfig struct {
 	MetadataDSN string
 	SinkDSN     string
 	LogLevel    string
-	LogFormat   string // "json" or "text"
+	LogFormat   string
+
+	// Housekeeping
+	HousekeepingEnabled       bool
+	HousekeepingCron          string
+	LogRetentionDays          int
+	LoadRunRetentionDays      int
+	HousekeepingBatchSize     int
+	HousekeepingBatchPauseMs  int
 }
 
 func FromEnv() (*AppConfig, error) {
@@ -21,6 +29,13 @@ func FromEnv() (*AppConfig, error) {
 		SinkDSN:     os.Getenv("LOADER_SINK_DSN"),
 		LogLevel:    getEnvDefault("LOADER_LOG_LEVEL", "info"),
 		LogFormat:   getEnvDefault("LOADER_LOG_FORMAT", "json"),
+
+		HousekeepingEnabled:      getEnvBool("LOADER_HOUSEKEEPING_ENABLED", true),
+		HousekeepingCron:         getEnvDefault("LOADER_HOUSEKEEPING_CRON", "0 2 * * *"), // 02:00 daily
+		LogRetentionDays:         getEnvInt("LOADER_LOG_RETENTION_DAYS", 14),
+		LoadRunRetentionDays:     getEnvInt("LOADER_LOAD_RUN_RETENTION_DAYS", 90),
+		HousekeepingBatchSize:    getEnvInt("LOADER_HOUSEKEEPING_BATCH_SIZE", 5000),
+		HousekeepingBatchPauseMs: getEnvInt("LOADER_HOUSEKEEPING_BATCH_PAUSE_MS", 100),
 	}
 	if c.MetadataDSN == "" {
 		return nil, fmt.Errorf("LOADER_METADATA_DSN is required")
@@ -29,6 +44,32 @@ func FromEnv() (*AppConfig, error) {
 		return nil, fmt.Errorf("LOADER_SINK_DSN is required")
 	}
 	return c, nil
+}
+
+func getEnvBool(k string, def bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(k)))
+	switch v {
+	case "":
+		return def
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
+}
+
+func getEnvInt(k string, def int) int {
+	v := os.Getenv(k)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 func getEnvDefault(k, d string) string {
