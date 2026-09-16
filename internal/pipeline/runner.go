@@ -36,6 +36,17 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 	)
 	ctx = logging.WithContext(ctx, log)
 
+	// Normalize loads for point-based sources.
+	if load.Source.Kind == "modbus" || load.Source.Kind == "opcua" {
+    	if load.Mode != string(contracts.LoadModeAppend) {
+        	log.Warn("forcing append mode for point-based source",
+            	"category", "read", "configured_mode", load.Mode)
+        	load.Mode = string(contracts.LoadModeAppend)
+    	}
+    	load.WatermarkColumn = ""
+    	load.WatermarkType = string(contracts.WatermarkNone)
+	}
+	
 	// 1. Build source config.
 	params, err := config.ResolveParams(load.Source.ParamsJSON)
 	if err != nil {
