@@ -16,22 +16,20 @@
 
 For production-quality seeding, don't blindly insert. Use MERGE or check existence first:
 
-`
+'
 IF NOT EXISTS (
    SELECT 1
    FROM meta\_sources
    WHERE name = @p1
-
 )
-
 BEGIN
    INSERT ...
 END
-`
+'
 
 or
 
-`
+'
 MERGE meta\_sources AS target
 USING (
    SELECT @p1 AS name
@@ -39,7 +37,7 @@ USING (
 ON target.name = source.name
 WHEN NOT MATCHED THEN
    INSERT (...);
-`
+'
 
 ### RUN
 
