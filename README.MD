@@ -141,9 +141,9 @@ search_path. If you don't fully qualify object_name (i.e. use orders instead of 
 5. **Restart the simulator.** Confirm the loader recovers on the next tick without restart.
 6. **Check yb_load_timestamp** — all rows from one poll cycle should share the same value.
 ### Known Limitations (v1, deliberate)
- - ** No block-read optimization.** Each tag is a separate Modbus transaction. On a slow serial-over-TCP link with 100+ tags this adds up. If it becomes a problem, we group contiguous addresses of the same register type into one read — happy to add when needed.
- - ** No reconnect logic on total link failure.**  If the TCP connection dies (not just individual reads), the next full run will fail. The scheduler retries on the next tick, which reopens the client — so this self-heals within one polling interval. Explicit reconnect-in-place could be added if intervals get long.
- - ** No per-tag polling frequency.**  All tags in a load share one cron schedule. If you need "read temperature every 60s but pressure every 1s", create two loads.
+ - **No block-read optimization.** Each tag is a separate Modbus transaction. On a slow serial-over-TCP link with 100+ tags this adds up. If it becomes a problem, we group contiguous addresses of the same register type into one read — happy to add when needed.
+ - **No reconnect logic on total link failure.**  If the TCP connection dies (not just individual reads), the next full run will fail. The scheduler retries on the next tick, which reopens the client — so this self-heals within one polling interval. Explicit reconnect-in-place could be added if intervals get long.
+ - **No per-tag polling frequency.**  All tags in a load share one cron schedule. If you need "read temperature every 60s but pressure every 1s", create two loads.
 
 ## OPC-UA Source Loader
 ### Design Notes Worth Understanding
