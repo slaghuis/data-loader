@@ -78,6 +78,7 @@ WHEN NOT MATCHED THEN
 ```
 
 ### RUN
+An automated seeding tool has been built to import a YAML file.  Some examples are included in the seeds directory.
 
 ```
 export DB\_CONNECTION="sqlserver://user:password@host:1433?database=mydb"
@@ -111,7 +112,7 @@ you might have to add an environment variable with the password.
 
 
 ## Postgres Source Module
-###Testing Checklist
+### Testing Checklist
  - Connectivity test — create a load with mode: append against a small Postgres table first. Confirm the target table is created and rows land with yb_load_timestamp populated.
  - Delta test — enable a watermark column, run once, insert a new row in Postgres, wait for the next tick. Only the new row should land.
  - Type mapping test — try a table containing NUMERIC, UUID, JSONB, TIMESTAMPTZ, and BOOLEAN. All should land as NVARCHAR(MAX) / FLOAT / BIT / DATETIME2 in MS SQL. If you want native UNIQUEIDENTIFIER or NVARCHAR(36) for UUIDs later, we'd extend the sink's type mapper.
@@ -124,14 +125,14 @@ search_path. If you don't fully qualify object_name (i.e. use orders instead of 
 
 ## Modbus Data Loader
 ### Design Notes Worth Understanding
-**Why one poll cycle = one batch (not one row per tag)?** Batch writes are dramatically faster than row-by-row inserts. Even a 200-tag PLC produces 200 rows per tick, and the sink chunks them appropriately.
-**Why not use the driver's typed read helpers (e.g. ReadFloat32)?** They exist and work, but doing our own decoding lets us:
+ - **Why one poll cycle = one batch (not one row per tag)?** Batch writes are dramatically faster than row-by-row inserts. Even a 200-tag PLC produces 200 rows per tick, and the sink chunks them appropriately.
+ - **Why not use the driver's typed read helpers (e.g. ReadFloat32)?** They exist and work, but doing our own decoding lets us:
  - Support types (int64, uint64) that some drivers omit.
  - Return decode errors as quality = "bad" rows instead of losing the tag entirely.
  - Keep endianness/word-order handling in one testable function.
-**Why store quality even if the sink table is untyped?** Bad readings are how you spot broken sensors. If you always drop them, you can't tell "sensor is offline" from "sensor read zero". Preserving bad rows with the error message in value_text gives you diagnostic breadcrumbs.
-**Why serialize with a mutex?** Modbus TCP is transaction-oriented; simultaneous requests on the same connection interleave and corrupt responses. A single sync.Mutex around reads is the correct pattern — and since a load runs once per tick under the scheduler's running guard, contention is essentially zero.
-**Why fail-open on connection errors?** If the PLC drops mid-poll, individual tag reads return errors and are stamped bad. The connection stays open for the next tick. If the entire load fails to open, the run is marked failed — same as SQL sources. This means transient network blips at a mine site don't require a restart.
+ - **Why store quality even if the sink table is untyped?** Bad readings are how you spot broken sensors. If you always drop them, you can't tell "sensor is offline" from "sensor read zero". Preserving bad rows with the error message in value_text gives you diagnostic breadcrumbs.
+ - **Why serialize with a mutex?** Modbus TCP is transaction-oriented; simultaneous requests on the same connection interleave and corrupt responses. A single sync.Mutex around reads is the correct pattern — and since a load runs once per tick under the scheduler's running guard, contention is essentially zero.
+ - **Why fail-open on connection errors?** If the PLC drops mid-poll, individual tag reads return errors and are stamped bad. The connection stays open for the next tick. If the entire load fails to open, the run is marked failed — same as SQL sources. This means transient network blips at a mine site don't require a restart.
 ### Testing Checklist
 1. **Start a Modbus simulator** — diagslave or the excellent ModbusPal work well on Linux.
 2. **Seed one holding-register tag with float32, data_type: float32, scale: 1.0.** Confirm the value lands in value_num.
@@ -140,7 +141,7 @@ search_path. If you don't fully qualify object_name (i.e. use orders instead of 
 5. **Restart the simulator.** Confirm the loader recovers on the next tick without restart.
 6. **Check yb_load_timestamp** — all rows from one poll cycle should share the same value.
 ### Known Limitations (v1, deliberate)
- - **No block-read optimization.** Each tag is a separate Modbus transaction. On a slow serial-over-TCP link with 100+ tags this adds up. If it becomes a problem, we group contiguous addresses of the same register type into one read — happy to add when needed.
+ - ** No block-read optimization.** Each tag is a separate Modbus transaction. On a slow serial-over-TCP link with 100+ tags this adds up. If it becomes a problem, we group contiguous addresses of the same register type into one read — happy to add when needed.
  - ** No reconnect logic on total link failure.**  If the TCP connection dies (not just individual reads), the next full run will fail. The scheduler retries on the next tick, which reopens the client — so this self-heals within one polling interval. Explicit reconnect-in-place could be added if intervals get long.
  - ** No per-tag polling frequency.**  All tags in a load share one cron schedule. If you need "read temperature every 60s but pressure every 1s", create two loads.
 
