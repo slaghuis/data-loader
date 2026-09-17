@@ -1,7 +1,15 @@
 # Edge Data Loader
 
+## Design brief
+A modular data loader in Go that will run on mine, and load data from various data sources and save the data to a local Microsoft SQL database.  The data loader should be modular, in the sense that one module will read SQL sources, one module will read Postgres sources, one module will read Modbus TCP sources, and one module will read OPC-UA sources.  There might be more modules in the future.  
+The data loader will be meta data driven, with all the meta data in a database.  Any data source will be associated to a module. For a SQL database, for example, the data source will be the server | database combination.  For Modbus, it will be the gateway, etc.  
+The metadata repository will carry specific data loads.  For SQL, it might be a table or a view.    Every load will have a schedule (hourly, every n minutes, daily, etc), a target table in the sink database.  A load will be governed by a watermark.  A good watermark will be a datetime field in a table for instance.  It could also be numeric.  Sometimes a table might not have a watermark.  First prize would be to pick up from the database server any new records that has been added since the last load, but alternatively an option should be available to do a full load.     The full load can the either replace (purge and re-populate) the existing data in the target table in the sink database or append the data.  Every data table in the sink database will be appended with a [load timestamp] field.
+The mine will have many SQL sources for instance.  On a set configurable schedule, the data loader will confirm that it is connected to the specified data source, (and connect if not). Then the loader will confirm the sink data table exists and create it if not.  The data loader will retrieve the last watermark, and if none exists, set the last value in the table as the watermark and execute a delta or full load of the data by reading data from the source and pushing it into the target table in the sink database.  If the load if for a watermark-based delta load, the query will only load all new data since the last watermark.  After the load, the watermark will be set to  
+The attempt to connect to a data source, the attempt to read a table and do a load and any error messages or success messages, new watermarks created and watermark resets will be logged in a table in the data loader metadata repository.
+The reason we are storing all the metadata of the loads in a database is that I want to use the data loader to retrieve the metadata from the cloud in future and push any logs back into the cloud. More about that later.
+
 ## Where the Loader Stands Now
-Every one of your original requirements is now implemented, plus:
+Every one of the original requirements is now implemented, plus:
  - Structured JSON logging (console + DB)
  - Overlap-safe scheduling
  - Health/readiness/status HTTP endpoints
@@ -18,26 +26,11 @@ This is a proper operational tool. Enjoy the shakedown period — a couple of da
 Next step
 Cloud sync (metadata down, logs up), but this needs to be designed thoughtfully — it's the most architecturally consequential feature left on the roadmap.
 
-## Design Notes
- - Why strings for watermark values? It keeps the schema simple and portable across watermark types (datetime, bigint, decimal). The WatermarkType on Load tells the source module how to parse/compare it. Trade-off: slight parsing overhead per run — negligible.
- - Why ParamsJSON instead of columns per source type? Each source module needs different config (SQL: server/db/user; Modbus: host/port/unit-id; OPC-UA: endpoint/security policy). JSON keeps the schema stable while allowing modules to evolve independently. The module owns the schema of its params.
- - Why a separate Watermark table (not a column on Load)? Cleaner audit trail (previous value, reset time, reset reason) and it separates config from runtime state. Config is user-owned; watermark is loader-owned.
- - Why RunUUID in addition to ID? The UUID is used for log correlation and will be safe to sync to the cloud later without primary-key collisions.
- - Non-blocking DB writes. If the metadata DB is slow or briefly down, log records queue in a bounded channel. Once full, new records drop (console still gets them). This prevents logging from ever stalling a load.
- - Repository.Log was left in place. Nothing that used it before breaks. But new code should prefer slog — cleaner and gives you dual output for free.
- - Well-known attribute promotion. Keys run_uuid, load_id, source_id, category map to typed columns in meta_log_entries. Everything else falls into details as JSON. This keeps queries fast without giving up flexibility.
- - No third-party log library. slog is standard, fast, and won't be abandoned.
-
-## What's missing intentionally (keeping v1 lean):
- - No retry policy table yet — add later.
- - No schema drift tracking — AutoCreateTable only.
- - No secrets manager integration — start with env-var references in ParamsJSON (e.g. {"password": "$env:SRC1\_PW"}).
-
 ## Run
 ```
 export LOADER_METADATA_DSN='sqlserver://user:pw@localhost?database=DataLoaderMeta'
 export LOADER_SINK_DSN='sqlserver://user:pw@localhost?database=DataLoaderSink'
-export ERP_PW='actual-password'
+export ERP_PW='actual-password'   # see seeding
 export LOADER_LOG_LEVEL=info      # debug | info | warn | error
 export LOADER_LOG_FORMAT=json     # json | text
 # Housekeeping (all optional; sensible defaults shown)
@@ -47,8 +40,10 @@ export LOADER_LOG_RETENTION_DAYS=14
 export LOADER_LOAD_RUN_RETENTION_DAYS=90
 export LOADER_HOUSEKEEPING_BATCH_SIZE=5000
 export LOADER_HOUSEKEEPING_BATCH_PAUSE_MS=100
+# Health monitoring (all optional; sensible defaults shown)
 export LOADER_HEALTH_ENABLED=true
 export LOADER_HEALTH_ADDR=127.0.0.1:9090
+# Metadata reload (all optional; sensible defaults shown)
 export LOADER_RELOAD_ENABLED=true
 export LOADER_RELOAD_INTERVAL_SEC=60     # 0 to disable periodic reload
 export LOADER_RELOAD_ON_SIGHUP=true
@@ -95,6 +90,25 @@ Remember, once you have seeded,
 `go run ./cmd/seed -file seeds/mes-postgres.yaml`
 you might have to add an environment variable with the password.
 `export MES_PW='the-actual-password'`
+
+
+## SQL Source Module
+
+## Design Notes
+ - **Why strings for watermark values?** It keeps the schema simple and portable across watermark types (datetime, bigint, decimal). The WatermarkType on Load tells the source module how to parse/compare it. Trade-off: slight parsing overhead per run — negligible.
+ - **Why ParamsJSON instead of columns per source type?** Each source module needs different config (SQL: server/db/user; Modbus: host/port/unit-id; OPC-UA: endpoint/security policy). JSON keeps the schema stable while allowing modules to evolve independently. The module owns the schema of its params.
+ - **Why a separate Watermark table (not a column on Load)?** Cleaner audit trail (previous value, reset time, reset reason) and it separates config from runtime state. Config is user-owned; watermark is loader-owned.
+ - **Why RunUUID in addition to ID?** The UUID is used for log correlation and will be safe to sync to the cloud later without primary-key collisions.
+ - **Non-blocking DB writes.** If the metadata DB is slow or briefly down, log records queue in a bounded channel. Once full, new records drop (console still gets them). This prevents logging from ever stalling a load.
+ - **Repository.Log was left in place.** Nothing that used it before breaks. But new code should prefer slog — cleaner and gives you dual output for free.
+ - **Well-known attribute promotion**. Keys run_uuid, load_id, source_id, category map to typed columns in meta_log_entries. Everything else falls into details as JSON. This keeps queries fast without giving up flexibility.
+ - **No third-party log library.** slog is standard, fast, and won't be abandoned.
+
+## What's missing intentionally (keeping v1 lean):
+ - No retry policy table yet — add later.
+ - No schema drift tracking — AutoCreateTable only.
+ - No secrets manager integration — start with env-var references in ParamsJSON (e.g. {"password": "$env:SRC1\_PW"}).
+
 
 ## Postgres Source Module
 ###Testing Checklist
