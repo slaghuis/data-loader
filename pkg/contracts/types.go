@@ -46,6 +46,7 @@ type Batch struct {
 type ReadResult struct {
 	RowsRead      int64
 	NewWatermark  Watermark // the watermark to persist after a successful load
+	WatermarkInit   bool   // true when NewWatermark was seeded without reading rows
 	StartedAt     time.Time
 	FinishedAt    time.Time
 }
