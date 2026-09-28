@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"strcov"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -70,6 +71,27 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 	start := time.Now().UTC()
 	result := contracts.ReadResult{StartedAt: start}
 
+    // First-run initialization for delta loads: seed the watermark from MAX()
+    // without reading any rows. Prevents accidental full back-load of large tables.
+    if load.Mode == contracts.LoadModeDelta &&
+        load.WatermarkColumn != "" &&
+        load.WatermarkType != contracts.WatermarkNone &&
+        load.LastWatermark.Value == "" {
+
+        upper, err := s.currentMaxWatermark(ctx, load.ObjectName, load.WatermarkColumn, load.WatermarkType)
+        if err != nil {
+            return result, fmt.Errorf("initialize watermark: %w", err)
+        }
+        log.Info("first-run: seeding watermark, no rows loaded",
+            "category", "watermark",
+            "watermark_to", upper.Value,
+        )
+        result.NewWatermark = upper
+        result.WatermarkInit = true
+        result.FinishedAt = time.Now().UTC()
+        return result, nil
+    }
+	
 	query, args, err := buildQuery(load)
 	if err != nil {
 		return result, err
@@ -127,7 +149,7 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 
 		row := make(contracts.Row, len(colNames))
 		for i, n := range colNames {
-			row[n] = normalizeValue(values[i])
+    		row[n] = normalizeValue(values[i], columns[i].DataType)
 		}
 		batch.Rows = append(batch.Rows, row)
 		rowsRead++
@@ -276,38 +298,101 @@ func formatWatermark(v any, t contracts.WatermarkType) string {
 	}
 }
 
-// normalizeValue converts Postgres-specific values into forms the MSSQL sink can insert.
-// Notably, pgx returns []byte for some text types and time.Time in UTC for timestamptz.
-func normalizeValue(v any) any {
-	switch val := v.(type) {
-	case []byte:
-		// Most commonly this is text data from NUMERIC/UUID/JSON columns.
-		return string(val)
-	case time.Time:
-		return val.UTC()
-	default:
-		return v
-	}
+// normalizeValue coerces driver-returned values into canonical Go types aligned
+// with contracts.Column.DataType, so sinks don't have to know pgx quirks.
+func normalizeValue(v any, canonical string) any {
+    if v == nil {
+        return nil
+    }
+    switch canonical {
+    case "decimal":
+        // pgx returns NUMERIC/DECIMAL/MONEY as []byte with ASCII digits.
+        switch x := v.(type) {
+        case []byte:
+            return string(x)
+        case string:
+            return x
+        case float64:
+            return strconv.FormatFloat(x, 'f', -1, 64)
+        case int64:
+            return strconv.FormatInt(x, 10)
+        }
+        return v
+
+    case "string":
+        // UUID, JSON, JSONB, and some text types come back as []byte.
+        if b, ok := v.([]byte); ok {
+            return string(b)
+        }
+        return v
+
+    case "bytes":
+        return v
+
+    case "datetime":
+        if t, ok := v.(time.Time); ok {
+            return t.UTC()
+        }
+        return v
+
+    default:
+        return v
+    }
 }
 
 // mapDriverType maps Postgres type names (as reported by pgx) to our canonical types.
 func mapDriverType(dbType string) string {
-	switch strings.ToUpper(dbType) {
-	case "INT8", "BIGINT":
-		return "int64"
-	case "INT4", "INTEGER", "INT2", "SMALLINT":
-		return "int32"
-	case "FLOAT4", "FLOAT8", "REAL", "DOUBLE PRECISION", "NUMERIC", "DECIMAL", "MONEY":
-		return "float64"
-	case "BOOL", "BOOLEAN":
-		return "bool"
-	case "TIMESTAMP", "TIMESTAMPTZ", "DATE", "TIME", "TIMETZ":
-		return "datetime"
-	case "BYTEA":
-		return "bytes"
-	case "UUID", "JSON", "JSONB", "TEXT", "VARCHAR", "BPCHAR", "CHAR", "NAME", "CITEXT":
-		return "string"
-	default:
-		return "string"
-	}
+    switch strings.ToUpper(dbType) {
+    case "INT8", "BIGINT":
+        return "int64"
+    case "INT4", "INTEGER", "INT2", "SMALLINT":
+        return "int32"
+    case "FLOAT4", "REAL":
+        return "float32"
+    case "FLOAT8", "DOUBLE PRECISION":
+        return "float64"
+    case "NUMERIC", "DECIMAL", "MONEY":
+        return "decimal"
+    case "BOOL", "BOOLEAN":
+        return "bool"
+    case "TIMESTAMP", "TIMESTAMPTZ", "DATE", "TIME", "TIMETZ":
+        return "datetime"
+    case "BYTEA":
+        return "bytes"
+    case "UUID", "JSON", "JSONB", "TEXT", "VARCHAR", "BPCHAR", "CHAR", "NAME", "CITEXT":
+        return "string"
+    default:
+        return "string"
+    }
+}
+
+// currentMaxWatermark queries MAX(watermark_column) as a string.
+func (s *Source) currentMaxWatermark(ctx context.Context, obj, col string, wmType contracts.WatermarkType) (contracts.Watermark, error) {
+    q := fmt.Sprintf("SELECT MAX(%s) FROM %s", quoteIdent(col), quoteQualifiedIdent(obj))
+    switch wmType {
+    case contracts.WatermarkDatetime:
+        var t sql.NullTime
+        if err := s.db.QueryRowContext(ctx, q).Scan(&t); err != nil {
+            return contracts.Watermark{}, err
+        }
+        if !t.Valid {
+            return contracts.Watermark{Type: wmType, Value: ""}, nil
+        }
+        return contracts.Watermark{Type: wmType, Value: t.Time.UTC().Format(time.RFC3339Nano)}, nil
+    case contracts.WatermarkNumeric:
+        var f sql.NullFloat64
+        if err := s.db.QueryRowContext(ctx, q).Scan(&f); err != nil {
+            return contracts.Watermark{}, err
+        }
+        if !f.Valid {
+            return contracts.Watermark{Type: wmType, Value: ""}, nil
+        }
+        return contracts.Watermark{Type: wmType, Value: strconv.FormatFloat(f.Float64, 'f', -1, 64)}, nil
+    default:
+        var raw sql.NullString
+        if err := s.db.QueryRowContext(ctx, q).Scan(&raw); err != nil {
+            return contracts.Watermark{}, err
+        }
+        return contracts.Watermark{Type: wmType, Value: raw.String}, nil
+    }
 }
