@@ -116,6 +116,7 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 	}
 
 	columns := []contracts.Column{
+		{Name: "correlation_id", DataType: "string", Nullable: true},
 		{Name: "tag_name", DataType: "string", Nullable: false},
 		{Name: "ts", DataType: "datetime", Nullable: false},
 		{Name: "value_num", DataType: "float64", Nullable: true},
@@ -133,6 +134,7 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 
 	for _, tag := range tags {
 		row := contracts.Row{
+			"correlation_id": nullIfEmpty(tag.CorrelationID),
 			"tag_name":   tag.TagName,
 			"ts":         pollTS,
 			"value_num":  nil,
@@ -383,4 +385,11 @@ func wordOrder(s string) mb.WordOrder {
 		return mb.LOW_WORD_FIRST
 	}
 	return mb.HIGH_WORD_FIRST
+}
+
+func nullIfEmpty(s string) any {
+    if s == "" {
+        return nil
+    }
+    return s
 }
