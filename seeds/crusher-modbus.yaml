@@ -1,0 +1,49 @@
+sources:
+  - name: crusher-plc
+    kind: modbus
+    description: Primary crusher PLC gateway
+    params:
+      host: 10.0.10.55
+      port: "502"
+      timeout_ms: "2000"
+
+loads:
+  - source: crusher-plc
+    name: crusher.telemetry
+    object_name: crusher_telemetry   # only used as the logical load name
+    target_schema: dbo
+    target_table: crusher_telemetry
+    mode: append
+    watermark_type: none
+    batch_size: 1000
+    auto_create_table: true
+    cron_expression: "@every 10s"
+    is_enabled: true
+
+modbus_tags:
+  - load: crusher.telemetry
+    tag_name: crusher.motor.current_amps
+    unit_id: 1
+    register_type: holding
+    address: 100
+    data_type: float32
+    byte_order: big
+    word_order: high_first
+    scale: 1.0
+    offset: 0.0
+
+  - load: crusher.telemetry
+    tag_name: crusher.motor.running
+    unit_id: 1
+    register_type: coil
+    address: 0
+    data_type: bool
+
+  - load: crusher.telemetry
+    tag_name: crusher.bearing.temp_c
+    unit_id: 1
+    register_type: input
+    address: 200
+    data_type: int16
+    scale: 0.1        # sensor reports tenths of a degree
+    offset: 0.0
