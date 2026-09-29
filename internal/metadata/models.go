@@ -107,6 +107,7 @@ type ModbusTag struct {
 	ID           int64  `gorm:"primaryKey;autoIncrement"`
 	LoadID       int64  `gorm:"not null;index"`
 
+	CorrelationID	string	`gorm:"column:correlation_id"`
 	TagName      string `gorm:"size:200;not null"`
 
 	// Modbus addressing
