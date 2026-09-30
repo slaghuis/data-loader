@@ -1,148 +1,79 @@
 package main
 
 import (
-	"context"
-	"database/sql"
-	"encoding/json"
-	"flag"
-	"log"
-	"os"
+    "context"
+    "flag"
+    "fmt"
+    "log/slog"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
 
-	_ "github.com/microsoft/go-mssqldb"
-	"gopkg.in/yaml.v3"
+    "gorm.io/driver/sqlserver"
+    "gorm.io/gorm"
+    "gorm.io/gorm/logger"
 
-	"github.com/slaghuis/data-loader/internal/seed"
+    "github.com/slaghuis/data-loader/internal/seed"
 )
 
 func main() {
-	var file string
-	flag.StringVar(&file, "file", "seeds/seed.yaml", "seed yaml file")
-	flag.Parse()
+    var file string
+    flag.StringVar(&file, "file", "seeds/seed.yaml", "path to seed YAML file")
+    flag.Parse()
 
-	data, err := os.ReadFile(file)
-	if err != nil {
-		log.Fatal(err)
-	}
+    log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	var cfg seed.SeedFile
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		log.Fatal(err)
-	}
+    dsn := os.Getenv("LOADER_METADATA_DSN")
+    if dsn == "" {
+        log.Error("LOADER_METADATA_DSN is not set")
+        os.Exit(2)
+    }
 
-	connStr := os.Getenv("DB_CONNECTION")
-	db, err := sql.Open("sqlserver", connStr)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
+    f, err := seed.Load(file)
+    if err != nil {
+        log.Error("load seed file", "file", file, "err", err)
+        os.Exit(1)
+    }
+    log.Info("seed file parsed",
+        "file", file,
+        "sources", len(f.Sources),
+        "loads", len(f.Loads),
+    )
 
-	ctx := context.Background()
+    db, err := gorm.Open(sqlserver.Open(dsn), &gorm.Config{
+        Logger: logger.Default.LogMode(logger.Warn),
+    })
+    if err != nil {
+        log.Error("open metadata db", "err", err)
+        os.Exit(1)
+    }
+    sqlDB, err := db.DB()
+    if err != nil {
+        log.Error("db handle", "err", err)
+        os.Exit(1)
+    }
+    defer sqlDB.Close()
 
-	sourceIDs := make(map[string]int64)
+    ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+    defer cancel()
 
-	for _, s := range cfg.Sources {
-		paramsJSON, err := json.Marshal(s.Params)
-		if err != nil {
-			log.Fatal(err)
-		}
+    ctx, cancelTimeout := context.WithTimeout(ctx, 60*time.Second)
+    defer cancelTimeout()
 
-		var id int64
+    rep, err := seed.Apply(ctx, db, f)
+    if err != nil {
+        log.Error("apply seed", "err", err)
+        os.Exit(1)
+    }
 
-		err = db.QueryRowContext(ctx, `
-			INSERT INTO meta_sources
-			(
-				name,
-				kind,
-				description,
-				params_json,
-				is_enabled,
-				created_at,
-				updated_at
-			)
-			OUTPUT INSERTED.id
-			VALUES
-			(
-				@p1,
-				@p2,
-				@p3,
-				@p4,
-				@p5,
-				SYSUTCDATETIME(),
-				SYSUTCDATETIME()
-			)
-		`,
-			s.Name,
-			s.Kind,
-			s.Description,
-			string(paramsJSON),
-			s.Enabled,
-		).Scan(&id)
-
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		sourceIDs[s.Name] = id
-		log.Printf("inserted source %s (id=%d)", s.Name, id)
-	}
-
-	for _, l := range cfg.Loads {
-		sourceID := sourceIDs[l.Source]
-
-		_, err := db.ExecContext(ctx, `
-			INSERT INTO meta_loads
-			(
-				source_id,
-				name,
-				object_name,
-				target_schema,
-				target_table,
-				mode,
-				watermark_column,
-				watermark_type,
-				batch_size,
-				auto_create_table,
-				cron_expression,
-				is_enabled,
-				created_at,
-				updated_at
-			)
-			VALUES
-			(
-				@p1,
-				@p2,
-				@p3,
-				@p4,
-				@p5,
-				@p6,
-				@p7,
-				@p8,
-				@p9,
-				@p10,
-				@p11,
-				@p12,
-				SYSUTCDATETIME(),
-				SYSUTCDATETIME()
-			)
-		`,
-			sourceID,
-			l.Name,
-			l.ObjectName,
-			l.TargetSchema,
-			l.TargetTable,
-			l.Mode,
-			l.WatermarkColumn,
-			l.WatermarkType,
-			l.BatchSize,
-			l.AutoCreateTable,
-			l.CronExpression,
-			l.Enabled,
-		)
-
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		log.Printf("inserted load %s", l.Name)
-	}
+    log.Info("seed applied",
+        "sources_created", rep.SourcesCreated,
+        "sources_updated", rep.SourcesUpdated,
+        "loads_created", rep.LoadsCreated,
+        "loads_updated", rep.LoadsUpdated,
+        "modbus_tags_written", rep.ModbusTags,
+        "opcua_nodes_written", rep.OPCUANodes,
+    )
+    fmt.Fprintln(os.Stderr, "OK")
 }
