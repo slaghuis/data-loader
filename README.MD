@@ -81,7 +81,7 @@ WHEN NOT MATCHED THEN
 An automated seeding tool has been built to import a YAML file.  Some examples are included in the seeds directory.
 
 ```
-export DB\_CONNECTION="sqlserver://user:password@host:1433?database=mydb"
+export LOADER_METADATA_DSN='sqlserver://user:pw@localhost?database=DataLoaderMeta'
 go run ./cmd/seed -file seeds/seed.yaml
 ```
 
