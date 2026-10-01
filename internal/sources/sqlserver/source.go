@@ -286,6 +286,8 @@ func canonicalType(dbType string) string {
                 return "datetime"
         case "BINARY", "VARBINARY", "IMAGE":
                 return "bytes"
+        case "UNIQUEIDENTIFIER":
+                return "guid"
         default:
                 return "string"
         }
@@ -330,7 +332,44 @@ func normalizeValue(v any, canonical string) any {
         // time.Time already; nothing to do.
         return v
 
+    case "guid":
+        if b, ok := v.([]byte); ok {
+            s, err := formatMSSQLGUID(b)
+            if err != nil {
+                return string(b) // fall back; sink will show garbage but we don't lose the row
+            }
+            return s
+        }
+        if s, ok := v.(string); ok {
+            return s
+        }
+        return v
+            
     default:
         return v
     }
+}
+
+
+// formatMSSQLGUID converts the 16-byte UNIQUEIDENTIFIER representation returned
+// by go-mssqldb into the canonical hyphenated form (e.g.
+// "A7027B07-49BC-4766-A283-4B776DFA74DA").
+//
+// SQL Server stores GUIDs with the first three groups in little-endian byte
+// order and the last two groups in big-endian order. The driver returns the
+// raw storage bytes, so we must swap groups 1–3 before formatting.
+func formatMSSQLGUID(b []byte) (string, error) {
+    if len(b) != 16 {
+        return "", fmt.Errorf("uniqueidentifier: expected 16 bytes, got %d", len(b))
+    }
+    // Swap into standard GUID byte order.
+    g := [16]byte{
+        b[3], b[2], b[1], b[0],   // Data1 (4 bytes, LE -> BE)
+        b[5], b[4],               // Data2 (2 bytes, LE -> BE)
+        b[7], b[6],               // Data3 (2 bytes, LE -> BE)
+        b[8], b[9],               // Data4 (as-is)
+        b[10], b[11], b[12], b[13], b[14], b[15], // Data4 cont. (as-is)
+    }
+    return fmt.Sprintf("%08X-%04X-%04X-%04X-%012X",
+        g[0:4], g[4:6], g[6:8], g[8:10], g[10:16]), nil
 }
