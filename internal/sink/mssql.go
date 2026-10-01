@@ -178,6 +178,8 @@ func mapToSQLType(canonical string) string {
 		return "varbinary(max)"
 	case "decimal":
 		return "decimal(38,10)"
+	case "guid":
+    	return "uniqueidentifier"
 	default:
 		return "nvarchar(max)"
 	}
