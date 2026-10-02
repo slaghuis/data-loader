@@ -121,14 +121,18 @@ func (s *MSSQLSink) WriteBatch(ctx context.Context, target contracts.TargetTable
 		for _, row := range batch.Rows {
 			vals := make([]any, 0, len(colNames))
 			for _, c := range batch.Columns {
-				vals = append(vals, row[c.Name])
-			}
+                pv, err := s.prepareValue(c, row[c.Name])
+                if err != nil {
+                    return fmt.Errorf("column %q: %w", c.Name, err)
+                }
+                vals = append(vals, pv)
+            }
 			vals = append(vals, loadTS)
 			if err := bulk.AddRow(vals); err != nil {
 				return err
 			}
 			rowsWritten++
-		}
+		}		
 		_, err := bulk.Done()
 		return err
 	})
@@ -136,6 +140,37 @@ func (s *MSSQLSink) WriteBatch(ctx context.Context, target contracts.TargetTable
 		return 0, err
 	}
 	return rowsWritten, nil
+}
+
+func toGUID(v any) (any, error) {
+    switch x := v.(type) {
+    case nil:
+        return nil, nil
+    case mssql.UniqueIdentifier:
+        return x, nil
+    case [16]byte:
+        return mssql.UniqueIdentifier(x), nil
+    case string:
+        var g mssql.UniqueIdentifier
+        if err := g.Scan(x); err != nil {
+            return nil, fmt.Errorf("parse guid %q: %w", x, err)
+        }
+        return g, nil
+    case []byte:
+        // 36-char hyphenated form, or 16-byte raw.
+        if len(x) == 16 {
+            var g mssql.UniqueIdentifier
+            copy(g[:], x)
+            return g, nil
+        }
+        var g mssql.UniqueIdentifier
+        if err := g.Scan(string(x)); err != nil {
+            return nil, fmt.Errorf("parse guid %q: %w", string(x), err)
+        }
+        return g, nil
+    default:
+        return nil, fmt.Errorf("unsupported type %T for guid column", v)
+    }
 }
 
 // ---------- helpers ----------
@@ -190,5 +225,16 @@ func nullability(nullable bool) string {
 		return "NULL"
 	}
 	return "NOT NULL"
+}
+
+// prepareValue converts a canonical-typed value into the form go-mssqldb's
+// bulk copy expects for the corresponding target column type.
+func (s *MSSQLSink) prepareValue(c contracts.Column, v any) (any, error) {
+    switch c.DataType {
+    case "guid":
+        return toGUID(v)
+    default:
+        return v, nil
+    }
 }
 
