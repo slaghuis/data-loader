@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
-	"strcov"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"

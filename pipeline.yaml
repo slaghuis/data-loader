@@ -1,0 +1,40 @@
+service: data-loader
+main_package: ./cmd/loader
+
+lint:
+  enabled: true
+
+test:
+  race: true
+  coverage: true
+  coverage_min: 0
+
+scan:
+  govulncheck: true
+  trivy: true
+
+build:
+  image: data-loader
+  registry: ${REGISTRY}
+
+integration:
+  enabled: false
+
+deploy:
+  manifests: ./deploy/k8s
+  environments:
+    staging:
+      kube_context: k3d-dev
+      namespace: data-loader-staging
+    production:
+      kube_context: prod
+      namespace: data-loader
+
+approval:
+  telegram_mcp_url: http://localhost:8765
+  required_for: [staging, production]
+  timeout_seconds: 3600
+
+notify:
+  on_failure: true
+  on_success: true
