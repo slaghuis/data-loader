@@ -18,11 +18,11 @@ type scheduledLoad struct {
 }
 
 type Scheduler struct {
-	cron    *cron.Cron
-	repo    *metadata.Repository
-	runner  *pipeline.Runner
-	state   *runstate.Registry
-	logger  *slog.Logger
+	cron   *cron.Cron
+	repo   *metadata.Repository
+	runner *pipeline.Runner
+	state  *runstate.Registry
+	logger *slog.Logger
 
 	mu          sync.Mutex
 	scheduled   map[int64]*scheduledLoad // by load ID

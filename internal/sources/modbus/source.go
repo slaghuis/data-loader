@@ -135,12 +135,12 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 	for _, tag := range tags {
 		row := contracts.Row{
 			"correlation_id": nullIfEmpty(tag.CorrelationID),
-			"tag_name":   tag.TagName,
-			"ts":         pollTS,
-			"value_num":  nil,
-			"value_bool": nil,
-			"value_text": nil,
-			"quality":    "good",
+			"tag_name":       tag.TagName,
+			"ts":             pollTS,
+			"value_num":      nil,
+			"value_bool":     nil,
+			"value_text":     nil,
+			"quality":        "good",
 		}
 
 		if err := s.client.SetUnitId(tag.UnitID); err != nil {
@@ -388,8 +388,8 @@ func wordOrder(s string) mb.WordOrder {
 }
 
 func nullIfEmpty(s string) any {
-    if s == "" {
-        return nil
-    }
-    return s
+	if s == "" {
+		return nil
+	}
+	return s
 }

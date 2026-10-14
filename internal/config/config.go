@@ -15,21 +15,21 @@ type AppConfig struct {
 	LogFormat   string
 
 	// Housekeeping
-	HousekeepingEnabled       bool
-	HousekeepingCron          string
-	LogRetentionDays          int
-	LoadRunRetentionDays      int
-	HousekeepingBatchSize     int
-	HousekeepingBatchPauseMs  int
+	HousekeepingEnabled      bool
+	HousekeepingCron         string
+	LogRetentionDays         int
+	LoadRunRetentionDays     int
+	HousekeepingBatchSize    int
+	HousekeepingBatchPauseMs int
 
 	// Health server
-	HealthEnabled  bool
-    HealthAddr     string
+	HealthEnabled bool
+	HealthAddr    string
 
 	// Metadata reload
-	ReloadEnabled       bool
-	ReloadIntervalSec   int   // 0 = disabled, periodic reload off
-	ReloadOnSIGHUP      bool
+	ReloadEnabled     bool
+	ReloadIntervalSec int // 0 = disabled, periodic reload off
+	ReloadOnSIGHUP    bool
 }
 
 func FromEnv() (*AppConfig, error) {
@@ -45,8 +45,8 @@ func FromEnv() (*AppConfig, error) {
 		LoadRunRetentionDays:     getEnvInt("LOADER_LOAD_RUN_RETENTION_DAYS", 90),
 		HousekeepingBatchSize:    getEnvInt("LOADER_HOUSEKEEPING_BATCH_SIZE", 5000),
 		HousekeepingBatchPauseMs: getEnvInt("LOADER_HOUSEKEEPING_BATCH_PAUSE_MS", 100),
-		HealthEnabled: 			  getEnvBool("LOADER_HEALTH_ENABLED", true),
-		HealthAddr:    			  getEnvDefault("LOADER_HEALTH_ADDR", "127.0.0.1:9090"),
+		HealthEnabled:            getEnvBool("LOADER_HEALTH_ENABLED", true),
+		HealthAddr:               getEnvDefault("LOADER_HEALTH_ADDR", "127.0.0.1:9090"),
 
 		ReloadEnabled:     getEnvBool("LOADER_RELOAD_ENABLED", true),
 		ReloadIntervalSec: getEnvInt("LOADER_RELOAD_INTERVAL_SEC", 60),

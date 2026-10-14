@@ -20,8 +20,8 @@ type Coordinator struct {
 	reloader Reloader
 	logger   *slog.Logger
 
-	interval    time.Duration
-	handleHUP   bool
+	interval  time.Duration
+	handleHUP bool
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
