@@ -89,7 +89,7 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
         if err != nil {
                 return result, fmt.Errorf("query source: %w", err)
         }
-        defer rows.Close()
+        defer func() { _ = rows.Close() }()
 
         colTypes, err := rows.ColumnTypes()
         if err != nil {

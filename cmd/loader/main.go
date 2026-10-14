@@ -75,7 +75,11 @@ func main() {
 		appLogger.Error("open sink", "err", err)
 		os.Exit(1)
 	}
-	defer sk.Close()
+	defer func() {
+		if err := sk.Close(); err != nil {
+			appLogger.Error("close sink", "err", err)
+		}
+	}()
 
 	// Run state registry
 	state := runstate.New()

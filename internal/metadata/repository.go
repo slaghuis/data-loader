@@ -8,6 +8,7 @@ import (
 	"time"
     "fmt"
     "sort"
+	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -289,7 +290,7 @@ func (r *Repository) MetadataFingerprint(ctx context.Context) (string, error) {
 	sort.Slice(modbusRows, func(i, j int) bool { return modbusRows[i].LoadID < modbusRows[j].LoadID })
 	sort.Slice(opcuaRows,  func(i, j int) bool { return opcuaRows[i].LoadID < opcuaRows[j].LoadID })
 
-	h := sha256.New()
+	h := &strings.Builder{}
 	fmt.Fprintf(h, "SOURCES:\n")
 	for _, s := range sources {
 		fmt.Fprintf(h, "%d|%s|%s|%v\n", s.ID, s.Kind, s.ParamsJSON, s.IsEnabled)
@@ -310,5 +311,6 @@ func (r *Repository) MetadataFingerprint(ctx context.Context) (string, error) {
 	for _, t := range opcuaRows {
 		fmt.Fprintf(h, "%d|%d|%d\n", t.LoadID, t.Enabled, t.Total)
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	sum := sha256.Sum256([]byte(h.String()))
+	return hex.EncodeToString(sum[:]), nil
 }

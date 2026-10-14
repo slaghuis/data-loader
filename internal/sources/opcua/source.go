@@ -228,12 +228,12 @@ func badRow(n metadata.OPCUANode, ts time.Time, msg string) contracts.Row {
 }
 
 func qualityFromStatus(s ua.StatusCode) string {
-	switch {
-	case s == ua.StatusOK:
+	switch s {
+	case ua.StatusOK:
 		return "good"
-	case s == ua.StatusBad: //s.Has(ua.StatusBad):
+	case ua.StatusBad: //s.Has(ua.StatusBad):
 		return "bad"
-	case s == ua.StatusUncertain: // s.Has(ua.StatusUncertain):
+	case ua.StatusUncertain: // s.Has(ua.StatusUncertain):
 		return "uncertain"
 	default:
 		return "good"

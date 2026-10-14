@@ -53,7 +53,11 @@ func main() {
         log.Error("db handle", "err", err)
         os.Exit(1)
     }
-    defer sqlDB.Close()
+    defer func() {
+        if err := sqlDB.Close(); err != nil {
+            log.Error("close metadata db", "err", err)
+        }
+    }()
 
     ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
     defer cancel()

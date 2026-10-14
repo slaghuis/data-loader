@@ -67,7 +67,11 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
                 log.Error("build source", "category", "connect", "err", err)
                 return err
         }
-        defer src.Close()
+        defer func() {
+                if err := src.Close(); err != nil {
+                        log.Warn("close source", "category", "connect", "err", err)
+                }
+        }()
 
         if err := src.Open(ctx); err != nil {
                 log.Error("open source", "category", "connect", "err", err)

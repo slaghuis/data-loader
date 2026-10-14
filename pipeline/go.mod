@@ -2,7 +2,7 @@ module github.com/slaghuis/data-loader/pipeline
 
 go 1.23
 
-require github.com/slaghuis/pipeline-lib v0.1.1
+require github.com/slaghuis/pipeline-lib v0.1.2
 
 require (
 	dagger.io/dagger v0.14.0 // indirect

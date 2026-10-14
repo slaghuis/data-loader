@@ -96,7 +96,7 @@ func (s *MSSQLSink) WriteBatch(ctx context.Context, target contracts.TargetTable
 	if err != nil {
 		return 0, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Column list in the exact order we will pass values.
 	colNames := make([]string, 0, len(batch.Columns)+1)
