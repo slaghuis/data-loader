@@ -1,5 +1,10 @@
 # Edge Data Loader
 
+## Documentation
+The formal documentation set lives in [`docs/`](docs/README.md):
+[requirements](docs/01-project-requirements.md) · [architecture](docs/02-architecture.md) · [implementation plan and defect register](docs/03-implementation-plan.md) · [AI rules](docs/04-ai-rules.md) · [decisions (ADRs)](docs/05-decisions.md).
+Phase 1 (this codebase) is complete. Phase 2 hardens it, Phase 3 adds a remote configuration API, and Phase 4 adds multiple sinks, including Microsoft Fabric.
+
 ## Design brief
 A modular data loader in Go that will run on mine, and load data from various data sources and save the data to a local Microsoft SQL database.  The data loader should be modular, in the sense that one module will read SQL sources, one module will read Postgres sources, one module will read Modbus TCP sources, and one module will read OPC-UA sources.  There might be more modules in the future.  
 The data loader will be meta data driven, with all the meta data in a database.  Any data source will be associated to a module. For a SQL database, for example, the data source will be the server | database combination.  For Modbus, it will be the gateway, etc.  
@@ -132,7 +137,7 @@ search_path. If you don't fully qualify object_name (i.e. use orders instead of 
  - Keep endianness/word-order handling in one testable function.
  - **Why store quality even if the sink table is untyped?** Bad readings are how you spot broken sensors. If you always drop them, you can't tell "sensor is offline" from "sensor read zero". Preserving bad rows with the error message in value_text gives you diagnostic breadcrumbs.
  - **Why serialize with a mutex?** Modbus TCP is transaction-oriented; simultaneous requests on the same connection interleave and corrupt responses. A single sync.Mutex around reads is the correct pattern — and since a load runs once per tick under the scheduler's running guard, contention is essentially zero.
- - **Why fail-open on connection errors?** If the PLC drops mid-poll, individual tag reads return errors and are stamped bad. The connection stays open for the next tick. If the entire load fails to open, the run is marked failed — same as SQL sources. This means transient network blips at a mine site don't require a restart.
+ - **Why fail-open on connection errors?** If the PLC drops mid-poll, individual tag reads return errors and are stamped bad. If the entire load fails to open, the run is marked failed — same as SQL sources. Every run opens a fresh connection and closes it at the end (connections are not kept between ticks; see D-17 in [docs/03](docs/03-implementation-plan.md#22-defect-register)), so transient network blips at a mine site don't require a restart.
 ### Testing Checklist
 1. **Start a Modbus simulator** — diagslave or the excellent ModbusPal work well on Linux.
 2. **Seed one holding-register tag with float32, data_type: float32, scale: 1.0.** Confirm the value lands in value_num.
