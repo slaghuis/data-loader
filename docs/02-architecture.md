@@ -308,7 +308,9 @@ data-loader/
 ├── pipeline/                   # Dagger CI pipeline (pipeline-lib)
 ├── docs/                       # this documentation set
 ├── pipeline.yaml               # CI configuration (lint/test/scan/build/deploy)
-└── README.MD
+├── ADR/                        # one file per ADR (NNNN-slug.md, YAML front matter)
+├── AGENTS.md                   # entry point for AI agents → docs/04, ADR/
+└── README.md
 ```
 
 ---

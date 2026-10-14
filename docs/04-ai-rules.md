@@ -72,7 +72,7 @@ These rules are mandatory. If a rule conflicts with an Accepted ADR, the ADR win
 - Document public interfaces. Every exported identifier has a godoc comment that starts with its name, and every package has a `doc.go` stating its responsibility and invariants.
 - Explain complex logic: GUID byte swapping, watermark snapshot ordering, Modbus word order. Explain *why*, not *what*.
 - Update `README.md` and the relevant `docs/` file **in the same change** as the code: new environment variables go in 02 Configuration, new endpoints in 02 API, new tables in 02 Data Model, and closed defects in 03.
-- Record architectural decisions as ADRs in [05 Decisions](05-decisions.md) **before** implementing: new dependencies, protocols, storage, auth, deployment, or cross-cutting concerns.
+- Record architectural decisions as ADR files in [`ADR/`](../ADR/) (format and index in [05 Decisions](05-decisions.md)) **before** implementing: new dependencies, protocols, storage, auth, deployment, or cross-cutting concerns.
 - Each module that has non-obvious operational behaviour gets `docs/modules/<module>.md`.
 
 ## Security Rules
@@ -85,7 +85,7 @@ These rules are mandatory. If a rule conflicts with an Accepted ADR, the ADR win
 ## Workflow for AI agents
 
 1. Before changing code, search for existing implementations (code-search MCP `search_code` / `find_similar_function`, or `rg`). Do not duplicate helpers.
-2. Before any architectural change, read [05 Decisions](05-decisions.md). If no ADR covers it, draft one with status *Proposed* and stop for review.
+2. Before any architectural change, check the ADRs: use the ADR MCP server (`find_decision`, `list_adrs`) or read [`ADR/`](../ADR/). If no ADR covers the change, draft one in `ADR/` with status *Proposed* and stop for review.
 3. Keep changes small and focused: one concern per commit, and formatting-only changes in separate commits.
 4. Run `gofmt`, `golangci-lint run` and `go test -race ./...` before declaring a change done. For adapter changes, also run `go test -tags integration ./...`.
 5. State assumptions explicitly in the PR description and in the relevant docs.

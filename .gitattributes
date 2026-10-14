@@ -1,0 +1,2 @@
+# The design indexer only recognises YAML front matter delimited by "---\n".
+ADR/*.md text eol=lf

@@ -80,7 +80,8 @@ Built iteratively between 2026-09-16 and 2026-10-14. These items reconstruct wha
 - [ ] Add a `.golangci.yml` file enabling `errcheck`, `govet`, `staticcheck`, `revive` (exported-symbol docs), `gosec`, `bodyclose`, `contextcheck`, `errorlint`, `gocyclo` (threshold 15) and `misspell`.
 - [ ] Remove dead code: `config.ResolveSecrets`, the unreachable `errFirstRunInit` / `IsFirstRunInit` path in `sqlserver`, and the `sql.ErrNoRows` branch in the runner (D-10, D-13).
 - [ ] Inject the build version with `-ldflags "-X main.version=…"` and report it in `/status` (D-12).
-- [ ] Rename the README to `README.md` and split the module design notes into `docs/modules/*.md`.
+- [x] Rename `README.MD` to `README.md` (the design indexer's include pattern is case-sensitive).
+- [ ] Split the README's module design notes into `docs/modules/*.md`.
 
 ### 2.2 Defect register
 
