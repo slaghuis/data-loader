@@ -1,2 +1,3 @@
-# The design indexer only recognises YAML front matter delimited by "---\n".
-ADR/*.md text eol=lf
+# LF everywhere: gofmt emits LF, and the design indexer only recognises YAML
+# front matter delimited by "---\n".
+* text=auto eol=lf
