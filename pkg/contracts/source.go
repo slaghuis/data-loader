@@ -6,7 +6,7 @@ import "context"
 // module-specific (e.g. connection string, query, table name).
 type SourceConfig struct {
 	SourceID   int64
-	SourceType string            // "sqlserver", "postgres", "modbus", "opcua"
+	SourceType string // "sqlserver", "postgres", "modbus", "opcua"
 	Name       string
 	Params     map[string]string // decrypted connection details
 }
@@ -15,11 +15,11 @@ type SourceConfig struct {
 type LoadConfig struct {
 	LoadID          int64
 	Name            string
-	ObjectName      string        // table/view name for SQL sources
+	ObjectName      string // table/view name for SQL sources
 	Mode            LoadMode
-	WatermarkColumn string        // empty if none
+	WatermarkColumn string // empty if none
 	WatermarkType   WatermarkType
-	LastWatermark   Watermark     // current known watermark, empty on first run
+	LastWatermark   Watermark // current known watermark, empty on first run
 	BatchSize       int
 }
 

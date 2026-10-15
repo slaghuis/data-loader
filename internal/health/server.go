@@ -86,7 +86,7 @@ func (s *Server) Stop(ctx context.Context) error {
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "ok",
+		"status":         "ok",
 		"uptime_seconds": int64(time.Since(s.state.StartedAt()).Seconds()),
 	})
 }

@@ -2,8 +2,8 @@ package contracts
 
 import (
 	"context"
-	"time"		
-	)
+	"time"
+)
 
 // TargetTable identifies where data should be written.
 type TargetTable struct {

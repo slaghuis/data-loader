@@ -22,10 +22,10 @@ import (
 	"github.com/slaghuis/data-loader/internal/scheduler"
 	"github.com/slaghuis/data-loader/internal/sink"
 
-	_ "github.com/slaghuis/data-loader/internal/sources/sqlserver"
-	_ "github.com/slaghuis/data-loader/internal/sources/postgres"
 	modbussrc "github.com/slaghuis/data-loader/internal/sources/modbus"
-	opcuasrc  "github.com/slaghuis/data-loader/internal/sources/opcua"
+	opcuasrc "github.com/slaghuis/data-loader/internal/sources/opcua"
+	_ "github.com/slaghuis/data-loader/internal/sources/postgres"
+	_ "github.com/slaghuis/data-loader/internal/sources/sqlserver"
 )
 
 func main() {
@@ -97,38 +97,38 @@ func main() {
 	// Health server
 	var hs *health.Server
 	if cfg.HealthEnabled {
-    	hs = health.New(cfg.HealthAddr, state, gdb, sk.DB(), "dev", appLogger)
-    	if err := hs.Start(); err != nil {
-        	appLogger.Error("start health server", "err", err)
-        	os.Exit(1)
-    	}
+		hs = health.New(cfg.HealthAddr, state, gdb, sk.DB(), "dev", appLogger)
+		if err := hs.Start(); err != nil {
+			appLogger.Error("start health server", "err", err)
+			os.Exit(1)
+		}
 	}
-	
+
 	// Metadata reload coordinator
 	var reloader *reload.Coordinator
 	if cfg.ReloadEnabled {
-    	reloader = reload.New(sch, reload.Config{
-        	Interval:  time.Duration(cfg.ReloadIntervalSec) * time.Second,
-        	HandleHUP: cfg.ReloadOnSIGHUP,
-    	}, appLogger)
-    	reloader.Start()
+		reloader = reload.New(sch, reload.Config{
+			Interval:  time.Duration(cfg.ReloadIntervalSec) * time.Second,
+			HandleHUP: cfg.ReloadOnSIGHUP,
+		}, appLogger)
+		reloader.Start()
 	}
 
 	// Housekeeping
 	var hk *housekeeping.Housekeeper
 	if cfg.HousekeepingEnabled {
-    	hk = housekeeping.New(repo, housekeeping.Config{
-        	CronExpression:       cfg.HousekeepingCron,
-        	LogRetentionDays:     cfg.LogRetentionDays,
-        	LoadRunRetentionDays: cfg.LoadRunRetentionDays,
-        	BatchSize:            cfg.HousekeepingBatchSize,
-        	BatchPause:           time.Duration(cfg.HousekeepingBatchPauseMs) * time.Millisecond,
-    	}, appLogger)
+		hk = housekeeping.New(repo, housekeeping.Config{
+			CronExpression:       cfg.HousekeepingCron,
+			LogRetentionDays:     cfg.LogRetentionDays,
+			LoadRunRetentionDays: cfg.LoadRunRetentionDays,
+			BatchSize:            cfg.HousekeepingBatchSize,
+			BatchPause:           time.Duration(cfg.HousekeepingBatchPauseMs) * time.Millisecond,
+		}, appLogger)
 
-    	if err := hk.Start(); err != nil {
-        	appLogger.Error("start housekeeping", "err", err)
-        	os.Exit(1)
-    	}
+		if err := hk.Start(); err != nil {
+			appLogger.Error("start housekeeping", "err", err)
+			os.Exit(1)
+		}
 	}
 
 	sigs := make(chan os.Signal, 1)
@@ -137,21 +137,21 @@ func main() {
 	appLogger.Info("shutdown signal received")
 
 	if reloader != nil {
-    	reloader.Stop()
+		reloader.Stop()
 	}
 	sch.Stop()
 	if hk != nil {
-    	stopCtx := hk.Stop()
-    	select {
-    	case <-stopCtx.Done():
-    	case <-time.After(30 * time.Second):
-        	appLogger.Warn("housekeeping did not stop in time")
-    	}
+		stopCtx := hk.Stop()
+		select {
+		case <-stopCtx.Done():
+		case <-time.After(30 * time.Second):
+			appLogger.Warn("housekeeping did not stop in time")
+		}
 	}
 	if hs != nil {
-    	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
-    	_ = hs.Stop(shutdownCtx)
-    	cancelShutdown()
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = hs.Stop(shutdownCtx)
+		cancelShutdown()
 	}
 	dbHandler.Close(5 * time.Second)
 	appLogger.Info("data-loader stopped")

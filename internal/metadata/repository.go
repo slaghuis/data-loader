@@ -3,12 +3,12 @@ package metadata
 import (
 	"context"
 	"crypto/sha256"
-    "encoding/hex"
+	"encoding/hex"
 	"errors"
-	"time"
-    "fmt"
-    "sort"
+	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -257,9 +257,9 @@ func (r *Repository) MetadataFingerprint(ctx context.Context) (string, error) {
 	// We still include their row counts and per-load enabled counts so the fingerprint
 	// covers "tag added" and "tag disabled" events.
 	type tagFP struct {
-		LoadID   int64
-		Enabled  int
-		Total    int
+		LoadID  int64
+		Enabled int
+		Total   int
 	}
 	var modbusRows []tagFP
 	if err := r.db.WithContext(ctx).
@@ -286,9 +286,9 @@ func (r *Repository) MetadataFingerprint(ctx context.Context) (string, error) {
 
 	// Sort defensively (SQL ORDER BY is authoritative but doesn't hurt).
 	sort.Slice(sources, func(i, j int) bool { return sources[i].ID < sources[j].ID })
-	sort.Slice(loads,   func(i, j int) bool { return loads[i].ID < loads[j].ID })
+	sort.Slice(loads, func(i, j int) bool { return loads[i].ID < loads[j].ID })
 	sort.Slice(modbusRows, func(i, j int) bool { return modbusRows[i].LoadID < modbusRows[j].LoadID })
-	sort.Slice(opcuaRows,  func(i, j int) bool { return opcuaRows[i].LoadID < opcuaRows[j].LoadID })
+	sort.Slice(opcuaRows, func(i, j int) bool { return opcuaRows[i].LoadID < opcuaRows[j].LoadID })
 
 	h := &strings.Builder{}
 	fmt.Fprintf(h, "SOURCES:\n")

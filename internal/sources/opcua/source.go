@@ -303,13 +303,14 @@ func assignValue(row contracts.Row, v any, scale, offset float64) {
 // buildClientOptions translates params into gopcua client options.
 //
 // Recognized params:
-//   endpoint          (required) e.g. opc.tcp://plc.mine.local:4840
-//   security_policy   None | Basic256Sha256 | ...     (default: None)
-//   security_mode     None | Sign | SignAndEncrypt    (default: None)
-//   auth              anonymous | username            (default: anonymous)
-//   username, password (if auth=username)
-//   session_timeout_ms (default 60000)
-//   request_timeout_ms (default 10000)
+//
+//	endpoint          (required) e.g. opc.tcp://plc.mine.local:4840
+//	security_policy   None | Basic256Sha256 | ...     (default: None)
+//	security_mode     None | Sign | SignAndEncrypt    (default: None)
+//	auth              anonymous | username            (default: anonymous)
+//	username, password (if auth=username)
+//	session_timeout_ms (default 60000)
+//	request_timeout_ms (default 10000)
 func buildClientOptions(p map[string]string) ([]uac.Option, error) {
 	opts := []uac.Option{}
 

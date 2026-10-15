@@ -7,28 +7,28 @@ import (
 
 // LoadState captures the most recent execution outcome for a single load.
 type LoadState struct {
-	LoadID          int64     `json:"load_id"`
-	LoadName        string    `json:"load_name"`
-	SourceName      string    `json:"source_name"`
-	SourceKind      string    `json:"source_kind"`
+	LoadID     int64  `json:"load_id"`
+	LoadName   string `json:"load_name"`
+	SourceName string `json:"source_name"`
+	SourceKind string `json:"source_kind"`
 
-	CronExpression  string    `json:"cron_expression"`
+	CronExpression string `json:"cron_expression"`
 
 	LastRunUUID     string    `json:"last_run_uuid,omitempty"`
 	LastStartedAt   time.Time `json:"last_started_at,omitempty"`
 	LastFinishedAt  time.Time `json:"last_finished_at,omitempty"`
-	LastStatus      string    `json:"last_status,omitempty"`        // success | failed | running
+	LastStatus      string    `json:"last_status,omitempty"` // success | failed | running
 	LastRowsRead    int64     `json:"last_rows_read"`
 	LastRowsWritten int64     `json:"last_rows_written"`
 	LastError       string    `json:"last_error,omitempty"`
 
-	CurrentlyRunning bool     `json:"currently_running"`
+	CurrentlyRunning bool `json:"currently_running"`
 }
 
 // Registry is a thread-safe in-memory store of load states.
 type Registry struct {
-	mu     sync.RWMutex
-	loads  map[int64]*LoadState
+	mu        sync.RWMutex
+	loads     map[int64]*LoadState
 	startedAt time.Time
 }
 
