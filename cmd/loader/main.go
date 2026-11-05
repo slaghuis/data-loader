@@ -22,6 +22,7 @@ import (
 	"github.com/slaghuis/data-loader/internal/runstate"
 	"github.com/slaghuis/data-loader/internal/scheduler"
 	"github.com/slaghuis/data-loader/internal/sink"
+	"github.com/slaghuis/data-loader/internal/sources"
 
 	_ "github.com/slaghuis/data-loader/internal/sources/modbus"
 	_ "github.com/slaghuis/data-loader/internal/sources/opcua"
@@ -90,8 +91,27 @@ func runServer() int {
 	// Run state registry
 	state := runstate.New()
 
+	// Source sessions: ephemeral (default) or pooled (ADR-021).
+	var pool *pipeline.SourcePool
+	var sessions pipeline.SourceSession
+	if cfg.SourcePoolEnabled {
+		pool = pipeline.NewSourcePool(sources.Build, pipeline.PoolConfig{
+			IdleTimeout: time.Duration(cfg.SourcePoolIdleSec) * time.Second,
+			MaxAge:      time.Duration(cfg.SourcePoolMaxAgeSec) * time.Second,
+		}, appLogger)
+		sessions = pool
+		appLogger.Info("source connection pool enabled",
+			"category", "connect",
+			"idle_sec", cfg.SourcePoolIdleSec,
+			"max_age_sec", cfg.SourcePoolMaxAgeSec,
+		)
+	} else {
+		sessions = pipeline.NewEphemeral(sources.Build)
+	}
+	defer func() { _ = sessions.Close() }()
+
 	// Pipeline & Scheduler (repo satisfies TelemetryCatalog for modbus/opcua).
-	runner := pipeline.NewRunner(repo, repo, sk, state, appLogger)
+	runner := pipeline.NewRunner(repo, repo, sk, state, appLogger, sessions)
 	sch := scheduler.New(repo, runner, state, appLogger,
 		time.Duration(cfg.ShutdownTimeoutSec)*time.Second)
 	if err := sch.Load(ctx); err != nil {
@@ -104,17 +124,31 @@ func runServer() int {
 	// Health server
 	var hs *health.Server
 	if cfg.HealthEnabled {
-		hs = health.New(cfg.HealthAddr, state, gdb, sk.DB(), version, appLogger)
+		var extras []health.ReadyCheck
+		if pool != nil {
+			extras = append(extras, health.ReadyCheck{
+				Name:  "source_pool",
+				Check: pool.PingAll,
+			})
+		}
+		hs = health.New(cfg.HealthAddr, state, gdb, sk.DB(), version, appLogger, extras...)
 		if err := hs.Start(); err != nil {
 			appLogger.Error("start health server", "err", err)
 			return 1
 		}
 	}
 
-	// Metadata reload coordinator
+	// Metadata reload coordinator (invalidate pooled sources after reload).
 	var reloader *reload.Coordinator
 	if cfg.ReloadEnabled {
-		reloader = reload.New(sch, reload.Config{
+		var reloadTarget reload.Reloader = sch
+		if pool != nil {
+			reloadTarget = &reload.Fanout{
+				Primary: sch,
+				After:   []func(){pool.InvalidateAll},
+			}
+		}
+		reloader = reload.New(reloadTarget, reload.Config{
 			Interval:  time.Duration(cfg.ReloadIntervalSec) * time.Second,
 			HandleHUP: cfg.ReloadOnSIGHUP,
 		}, appLogger)

@@ -39,4 +39,4 @@ Positive:
 Negative:
 
 - More boilerplate.
-- Phase 1 conforms only partially: the application layer depends on the concrete `*metadata.Repository`, and the telemetry adapters import `internal/metadata`. This is fixed in Phase 2 (03 §2.3).
+- Phase 1 conformed only partially. Phase 2 introduced narrow ports for the runner/scheduler/logging and removed telemetry adapters' `internal/metadata` imports. Remaining DI (housekeeping, clocks, domain extract) is Phase 2.1.

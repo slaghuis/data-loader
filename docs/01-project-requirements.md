@@ -230,7 +230,7 @@ Load the whole source object, either adding to the target or replacing its conte
 
 - Rows in the target table, all stamped with the same load timestamp.
 
-> **Known defect:** if the source returns zero rows, a `replace` load does not truncate, so stale data remains. Truncate and insert are also not atomic. See D-05.
+> **Resolved (ADR-020):** `replace` loads use atomic staging (`{table}_stg` + `sp_rename`). A zero-row source still clears an existing target on commit.
 
 ---
 

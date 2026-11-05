@@ -8,7 +8,7 @@
 
 Each decision lives in its own file under [`ADR/`](../ADR/) so the design indexer and the ADR server (`find_decision`, `list_adrs`, `get_adr`) can index it individually. This page is only the index.
 
-The Phase 1 decisions were made while the loader was being built (from 2026-09-16) and are recorded retroactively (2026-10-14). ADR-012 (versioned migrations) was **Accepted** on 2026-11-05 and supersedes ADR-011. Remaining Phase 3–4 decisions are still **Proposed** and need review before implementation (see [04 AI Rules](04-ai-rules.md#workflow-for-ai-agents)).
+The Phase 1 decisions were made while the loader was being built (from 2026-09-16) and are recorded retroactively (2026-10-14). Phase 2 acceptances on 2026-11-05: ADR-012 (goose; supersedes ADR-011), ADR-020 (atomic replace), ADR-021 (opt-in source pool). Remaining Phase 3–4 decisions are still **Proposed** and need review before implementation (see [04 AI Rules](04-ai-rules.md#workflow-for-ai-agents)).
 
 ## Index
 
@@ -33,8 +33,8 @@ The Phase 1 decisions were made while the loader was being built (from 2026-09-1
 | [ADR-017](../ADR/0017-schema-discovery-and-preview-as-optional-source-capabilities.md) | Schema discovery and preview as optional source capabilities | Proposed | 3 |
 | [ADR-018](../ADR/0018-multi-sink-delivery-direct-fan-out-plus-store-and-forward.md) | Multi-sink delivery: direct fan-out plus store-and-forward | Proposed | 4 |
 | [ADR-019](../ADR/0019-microsoft-fabric-through-an-open-mirroring-landing-zone.md) | Microsoft Fabric through an Open Mirroring landing zone | Proposed — spike required | 4 |
-| [ADR-020](../ADR/0020-atomic-replace-through-a-staging-table-and-swap.md) | Atomic `replace` through a staging table and swap (D-05) | Proposed | 2 |
-| [ADR-021](../ADR/0021-source-connection-reuse-across-runs.md) | Source connection reuse across runs (D-17) | Proposed | 2 |
+| [ADR-020](../ADR/0020-atomic-replace-through-a-staging-table-and-swap.md) | Atomic `replace` through a staging table and swap (D-05) | Accepted | 2 |
+| [ADR-021](../ADR/0021-source-connection-reuse-across-runs.md) | Source connection reuse across runs (D-17) | Accepted | 2 |
 
 ## Writing a new ADR
 

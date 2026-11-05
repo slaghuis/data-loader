@@ -33,6 +33,11 @@ type AppConfig struct {
 
 	// Shutdown
 	ShutdownTimeoutSec int
+
+	// Source connection pool (ADR-021); off by default.
+	SourcePoolEnabled   bool
+	SourcePoolIdleSec   int // idle eviction; default 300
+	SourcePoolMaxAgeSec int // hard reconnect age; 0 disables; default 3600
 }
 
 func FromEnv() (*AppConfig, error) {
@@ -56,6 +61,10 @@ func FromEnv() (*AppConfig, error) {
 		ReloadOnSIGHUP:    getEnvBool("LOADER_RELOAD_ON_SIGHUP", true),
 
 		ShutdownTimeoutSec: getEnvInt("LOADER_SHUTDOWN_TIMEOUT_SEC", 60),
+
+		SourcePoolEnabled:   getEnvBool("LOADER_SOURCE_POOL", false),
+		SourcePoolIdleSec:   getEnvInt("LOADER_SOURCE_POOL_IDLE_SEC", 300),
+		SourcePoolMaxAgeSec: getEnvInt("LOADER_SOURCE_POOL_MAX_AGE_SEC", 3600),
 	}
 	if c.MetadataDSN == "" {
 		return nil, fmt.Errorf("LOADER_METADATA_DSN is required")

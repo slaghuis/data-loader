@@ -3,7 +3,7 @@
 ## Documentation
 The formal documentation set lives in [`docs/`](docs/README.md):
 [requirements](docs/01-project-requirements.md) · [architecture](docs/02-architecture.md) · [implementation plan and defect register](docs/03-implementation-plan.md) · [AI rules](docs/04-ai-rules.md) · [decisions (ADRs)](docs/05-decisions.md).
-Phase 1 (this codebase) is complete. Phase 2 hardens it, Phase 3 adds a remote configuration API, and Phase 4 adds multiple sinks, including Microsoft Fabric.
+Phases 1–2 are operationally complete (defects closed, goose migrations, `/metrics`, atomic replace, opt-in source pool). Phase 2.1 is a short deferred backlog (integration/coverage gates). Phase 3 adds a remote configuration API; Phase 4 adds multiple sinks, including Microsoft Fabric.
 
 ## Design brief
 A modular data loader in Go that will run on mine, and load data from various data sources and save the data to a local Microsoft SQL database.  The data loader should be modular, in the sense that one module will read SQL sources, one module will read Postgres sources, one module will read Modbus TCP sources, and one module will read OPC-UA sources.  There might be more modules in the future.  
@@ -29,7 +29,7 @@ This is a proper operational tool. Enjoy the shakedown period — a couple of da
 
 
 Next step
-Cloud sync (metadata down, logs up), but this needs to be designed thoughtfully — it's the most architecturally consequential feature left on the roadmap.
+Phase 3 remote configuration API (after ADR-014/015/016), or Phase 2.1 integration/coverage gates if you want stricter CI first.
 
 ## Run
 ```

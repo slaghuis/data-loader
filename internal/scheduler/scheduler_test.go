@@ -46,7 +46,7 @@ func TestScheduler_Load_AbortsOrphans_D09(t *testing.T) {
 	runner := pipeline.NewRunnerWithBuilder(store, nil, sink, runstate.New(), slog.New(slog.NewTextHandler(io.Discard, nil)),
 		func(cfg contracts.SourceConfig) (contracts.Source, error) {
 			return &testutil.FakeSource{KindName: "fake"}, nil
-		})
+		}, nil)
 	sch := scheduler.New(repo, runner, runstate.New(), slog.New(slog.NewTextHandler(io.Discard, nil)), time.Second)
 
 	if err := sch.Load(context.Background()); err != nil {
@@ -67,7 +67,7 @@ func TestScheduler_Stop_AbortsRunning_D09(t *testing.T) {
 	runner := pipeline.NewRunnerWithBuilder(store, nil, sink, runstate.New(), slog.New(slog.NewTextHandler(io.Discard, nil)),
 		func(cfg contracts.SourceConfig) (contracts.Source, error) {
 			return &testutil.FakeSource{KindName: "fake"}, nil
-		})
+		}, nil)
 	sch := scheduler.New(repo, runner, runstate.New(), slog.New(slog.NewTextHandler(io.Discard, nil)), 50*time.Millisecond)
 
 	sch.Start()
