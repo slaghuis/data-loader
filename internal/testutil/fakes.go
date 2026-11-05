@@ -43,7 +43,7 @@ func (f *FakeSource) Read(ctx context.Context, load contracts.LoadConfig, handle
 	return contracts.ReadResult{}, nil
 }
 
-// FakeSink records EnsureTable / Truncate / WriteBatch calls.
+// FakeSink records EnsureTable / Truncate / WriteBatch / AtomicReplacer calls.
 type FakeSink struct {
 	mu sync.Mutex
 
@@ -52,13 +52,26 @@ type FakeSink struct {
 	EnsureErr     error
 	TruncateErr   error
 	WriteErr      error
+	BeginErr      error
+	CommitErr     error
+	AbortErr      error
 	EnsureCalls   int
 	TruncateCalls int
 	WriteCalls    int
+	BeginCalls    int
+	CommitCalls   int
+	AbortCalls    int
 	RowsWritten   int64
 	LastTarget    contracts.TargetTable
+	LastWriteTo   contracts.TargetTable
 	Truncated     bool
 }
+
+// Ensure FakeSink satisfies Sink and AtomicReplacer.
+var (
+	_ contracts.Sink           = (*FakeSink)(nil)
+	_ contracts.AtomicReplacer = (*FakeSink)(nil)
+)
 
 func (s *FakeSink) Open(context.Context) error { return nil }
 func (s *FakeSink) Ping(context.Context) error { return nil }
@@ -86,16 +99,73 @@ func (s *FakeSink) Truncate(_ context.Context, target contracts.TargetTable) err
 	return s.TruncateErr
 }
 
-func (s *FakeSink) WriteBatch(_ context.Context, _ contracts.TargetTable, batch contracts.Batch, _ time.Time) (int64, error) {
+func (s *FakeSink) WriteBatch(_ context.Context, target contracts.TargetTable, batch contracts.Batch, _ time.Time) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.WriteCalls++
+	s.LastWriteTo = target
 	if s.WriteErr != nil {
 		return 0, s.WriteErr
 	}
 	n := int64(len(batch.Rows))
 	s.RowsWritten += n
 	return n, nil
+}
+
+func (s *FakeSink) BeginReplace(_ context.Context, target contracts.TargetTable, _ []contracts.Column) (contracts.TargetTable, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.BeginCalls++
+	if s.BeginErr != nil {
+		return contracts.TargetTable{}, s.BeginErr
+	}
+	stg := contracts.TargetTable{Schema: target.Schema, Name: target.Name + "_stg"}
+	s.LastTarget = stg
+	return stg, nil
+}
+
+func (s *FakeSink) CommitReplace(_ context.Context, target, _ contracts.TargetTable) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.CommitCalls++
+	s.LastTarget = target
+	s.Exists = true
+	return s.CommitErr
+}
+
+func (s *FakeSink) AbortReplace(context.Context, contracts.TargetTable) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.AbortCalls++
+	return s.AbortErr
+}
+
+// TruncateOnlySink implements Sink but not AtomicReplacer (legacy replace path).
+type TruncateOnlySink struct {
+	Exists        bool
+	TruncateCalls int
+	EnsureCalls   int
+	WriteCalls    int
+}
+
+func (s *TruncateOnlySink) Open(context.Context) error { return nil }
+func (s *TruncateOnlySink) Ping(context.Context) error { return nil }
+func (s *TruncateOnlySink) Close() error               { return nil }
+func (s *TruncateOnlySink) TableExists(context.Context, contracts.TargetTable) (bool, error) {
+	return s.Exists, nil
+}
+func (s *TruncateOnlySink) EnsureTable(context.Context, contracts.TargetTable, []contracts.Column) error {
+	s.EnsureCalls++
+	s.Exists = true
+	return nil
+}
+func (s *TruncateOnlySink) Truncate(context.Context, contracts.TargetTable) error {
+	s.TruncateCalls++
+	return nil
+}
+func (s *TruncateOnlySink) WriteBatch(_ context.Context, _ contracts.TargetTable, batch contracts.Batch, _ time.Time) (int64, error) {
+	s.WriteCalls++
+	return int64(len(batch.Rows)), nil
 }
 
 // FakeRunStore is an in-memory metadata.Repository stand-in for pipeline tests.

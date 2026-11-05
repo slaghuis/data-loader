@@ -17,7 +17,7 @@ type LoadMode string
 const (
 	LoadModeDelta   LoadMode = "delta"   // watermark-based incremental
 	LoadModeAppend  LoadMode = "append"  // full read, append rows
-	LoadModeReplace LoadMode = "replace" // truncate target, then load
+	LoadModeReplace LoadMode = "replace" // atomic staging swap (ADR-020) when sink supports it
 )
 
 // Watermark carries a typed watermark value as a string for portability.

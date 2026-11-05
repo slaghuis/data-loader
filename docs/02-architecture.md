@@ -35,7 +35,7 @@ The loader is a single Go binary (`cmd/loader`) built around a small engine:
 
 - Writing to any source system or OT device (BR-008).
 - Business logic in `cmd/*/main.go` beyond wiring.
-- Package-level mutable dependencies. Phase 1 has two: `modbus.tagRepo` and `opcua.nodeRepo` (D-14); they are removed in Phase 2.
+- Package-level mutable source repositories. Removed in Phase 2 (D-14): Modbus/OPC UA use injected `contracts.TelemetryCatalog`.
 - Building SQL by concatenating identifiers that have not been validated and quoted. Values must always be bind parameters.
 - Secrets in `params_json`, logs, API responses or error messages.
 - `panic` for control flow, and swallowing errors without logging (`_ = err` without a comment explaining why).
@@ -96,7 +96,7 @@ flowchart TB
 ### Domain
 
 - `pkg/contracts`: the stable vocabulary. `Source`, `Sink`, `SourceFactory`, `LoadConfig`, `Batch`, `Row`, `Column` (canonical types), `Watermark`, `WatermarkType`, `LoadMode`, `ReadResult`.
-- Rules (as built, but scattered): first-run watermark initialisation, telemetry sources forced to append, and watermark advance only on success. Phase 2 consolidates them into domain functions with unit tests.
+- Rules (as built, still mostly in the runner/sources): first-run watermark initialisation, telemetry sources forced to append, and watermark advance only on success. Consolidating them into domain functions is Phase 2.1.
 
 ### Infrastructure
 
@@ -106,7 +106,7 @@ flowchart TB
 - `logging`: slog construction and the asynchronous DB mirror handler.
 - `config`: environment parsing and `$env:` secret resolution.
 
-> **Phase 1 conformance gap:** `pipeline.Runner`, `scheduler.Scheduler` and `housekeeping.Housekeeper` depend on the concrete `*metadata.Repository`. The Modbus and OPC UA sources import `internal/metadata` models (infrastructure leaking into an adapter that should only see the domain). Phase 2 introduces narrow repository interfaces in the consuming packages (see [Interface Definitions](#interface-definitions)).
+> **Conformance (Phase 2):** `pipeline.Runner` and `scheduler.Scheduler` depend on narrow interfaces (`RunStore`, `RunAborter`, `SourceSession`). Modbus/OPC UA no longer import `internal/metadata` (they use `contracts.TelemetryCatalog`). `housekeeping.Housekeeper` still takes `*metadata.Repository` concretely — further DI is Phase 2.1.
 
 ---
 
@@ -168,7 +168,7 @@ flowchart TB
     RUNNER -->|"SourceConfig.Telemetry"| UA
     MB -.->|ListModbusTags| REPO
     UA -.->|ListOPCUANodes| REPO
-    RUNNER -->|EnsureTable / Truncate / WriteBatch| SINK
+    RUNNER -->|EnsureTable / WriteBatch / AtomicReplacer| SINK
     RUNNER -->|watermark, StartRun, FinishRun| REPO
     RUNNER --> RS["runstate.Registry"]
     HS --> RS
@@ -198,7 +198,7 @@ sequenceDiagram
     R->>M: GetWatermark(load)
     R->>M: StartRun → run_uuid (status=running)
     opt mode=replace and table exists
-        R->>K: Truncate (before Read; D-05)
+        R->>K: BeginReplace (staging clone; ADR-020)
     end
     alt no stored watermark (first run)
         R->>S: Read()
@@ -210,12 +210,18 @@ sequenceDiagram
         S->>S: SELECT * WHERE wm > last AND wm <= upper ORDER BY wm
         loop each batch (batch_size rows)
             S->>R: handler(batch)
-            opt first batch
+            opt first batch and not replace
                 R->>K: EnsureTable (if auto_create_table)
             end
-            R->>K: WriteBatch(rows, yb_load_timestamp)
+            opt first batch and replace and staging not yet begun
+                R->>K: BeginReplace (create staging from columns)
+            end
+            R->>K: WriteBatch(staging or live, yb_load_timestamp)
         end
         S-->>R: RowsRead, NewWatermark=upper
+    end
+    opt mode=replace and staging active
+        R->>K: CommitReplace (sp_rename swap)
     end
     R->>M: UpsertWatermark (delta only; failure fails the run — D-04)
     R->>M: FinishRun(success|failed, rows, wm_end, error)
@@ -423,7 +429,7 @@ erDiagram
     }
 ```
 
-> Foreign keys: GORM creates a constraint only for `meta_loads.source_id → meta_sources.id` (declared by the association). Other `load_id` columns are indexed but not constrained. Phase 2 migrations add explicit constraints.
+> Foreign keys: goose migration `00002` adds explicit FKs and an index on `meta_load_runs(status, started_at)` (ADR-012).
 
 ## Source
 
@@ -838,10 +844,18 @@ type Source interface {
 type Sink interface {
     Open(ctx context.Context) error
     Ping(ctx context.Context) error
+    TableExists(ctx context.Context, target TargetTable) (bool, error)
     EnsureTable(ctx context.Context, target TargetTable, columns []Column) error
     Truncate(ctx context.Context, target TargetTable) error
     WriteBatch(ctx context.Context, target TargetTable, batch Batch, loadTS time.Time) (int64, error)
     Close() error
+}
+
+// Optional — detected by type assertion (ADR-020).
+type AtomicReplacer interface {
+    BeginReplace(ctx context.Context, target TargetTable, columns []Column) (staging TargetTable, err error)
+    CommitReplace(ctx context.Context, target, staging TargetTable) error
+    AbortReplace(ctx context.Context, staging TargetTable) error
 }
 
 type SourceFactory func(cfg SourceConfig) (Source, error)
@@ -1049,7 +1063,7 @@ Loads on `modbus`/`opcua` sources are forced to `append` with no watermark, rega
 
 ## Rule 4 — Replace truncates before the read
 
-`replace` truncates the target **before** `Source.Read` when the table already exists, so a zero-row source clears stale data (D-05 truncate timing). Truncate+insert are still not atomic; staging/`sp_rename` waits on ADR-020.
+`replace` uses the optional `AtomicReplacer` sink capability (ADR-020): rows land in `{table}_stg`, then `sp_rename` swaps staging into the live name on success. If the live table already exists, staging is prepared before `Read` so a zero-row source still clears it on commit. Sinks without `AtomicReplacer` fall back to truncate-before-read.
 
 ## Rule 5 — No overlapping runs of the same load
 
@@ -1114,6 +1128,9 @@ LOADER_LOG_FORMAT: json           # json | text
 | *secret refs* e.g. `ERP_PW` | — | 1 | Referenced from params as `$env:ERP_PW` |
 | `LOADER_VERSION` (ldflags) | `dev` | 2 | Build version injected via `-ldflags -X` |
 | `LOADER_SHUTDOWN_TIMEOUT_SEC` | `60` | 2 | Wait for in-flight runs on stop |
+| `LOADER_SOURCE_POOL` | `false` | 2 | Reuse source connections across runs (ADR-021) |
+| `LOADER_SOURCE_POOL_IDLE_SEC` | `300` | 2 | Close pooled sources after this idle period |
+| `LOADER_SOURCE_POOL_MAX_AGE_SEC` | `3600` | 2 | Force reconnect after this age (`0` disables) |
 | `LOADER_API_ENABLED` | `false` | 3 | |
 | `LOADER_API_ADDR` | `127.0.0.1:8443` | 3 | |
 | `LOADER_API_TLS_CERT_FILE` / `_KEY_FILE` | — | 3 | Required when API enabled (except dev) |

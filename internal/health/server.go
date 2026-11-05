@@ -17,6 +17,12 @@ import (
 	"github.com/slaghuis/data-loader/internal/runstate"
 )
 
+// ReadyCheck is an optional named probe included in /readyz (e.g. source pool).
+type ReadyCheck struct {
+	Name  string
+	Check func(ctx context.Context) error
+}
+
 // Server exposes /healthz, /readyz, /status, /metrics.
 type Server struct {
 	addr    string
@@ -25,12 +31,13 @@ type Server struct {
 	metaDB  *gorm.DB
 	sinkDB  *sql.DB
 	version string
+	extras  []ReadyCheck
 
 	srv *http.Server
 }
 
 // New builds the server. Any of metaDB/sinkDB may be nil to skip that check.
-func New(addr string, state *runstate.Registry, metaDB *gorm.DB, sinkDB *sql.DB, version string, logger *slog.Logger) *Server {
+func New(addr string, state *runstate.Registry, metaDB *gorm.DB, sinkDB *sql.DB, version string, logger *slog.Logger, extras ...ReadyCheck) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -44,6 +51,7 @@ func New(addr string, state *runstate.Registry, metaDB *gorm.DB, sinkDB *sql.DB,
 		metaDB:  metaDB,
 		sinkDB:  sinkDB,
 		version: version,
+		extras:  extras,
 	}
 }
 
@@ -121,6 +129,24 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 			result["sink"] = err.Error()
 			result["status"] = "degraded"
 			overall = http.StatusServiceUnavailable
+		}
+	}
+
+	for _, extra := range s.extras {
+		name := extra.Name
+		if name == "" {
+			name = "extra"
+		}
+		if extra.Check == nil {
+			result[name] = "ok"
+			continue
+		}
+		if err := extra.Check(ctx); err != nil {
+			result[name] = err.Error()
+			result["status"] = "degraded"
+			overall = http.StatusServiceUnavailable
+		} else {
+			result[name] = "ok"
 		}
 	}
 

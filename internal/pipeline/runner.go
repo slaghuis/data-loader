@@ -22,24 +22,28 @@ type Runner struct {
 	sink      contracts.Sink
 	state     *runstate.Registry
 	logger    *slog.Logger
-	buildFn   SourceBuilder
+	sessions  SourceSession
 }
 
 // NewRunner wires the production source registry as the SourceBuilder.
 // telemetry may be nil when no modbus/opcua loads are used.
-func NewRunner(repo RunStore, telemetry contracts.TelemetryCatalog, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger) *Runner {
-	return NewRunnerWithBuilder(repo, telemetry, sink, state, logger, sources.Build)
+// sessions may be nil (open-per-run) or a SourcePool when LOADER_SOURCE_POOL is on (ADR-021).
+func NewRunner(repo RunStore, telemetry contracts.TelemetryCatalog, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger, sessions SourceSession) *Runner {
+	return NewRunnerWithBuilder(repo, telemetry, sink, state, logger, sources.Build, sessions)
 }
 
-// NewRunnerWithBuilder allows tests to inject a SourceBuilder.
-func NewRunnerWithBuilder(repo RunStore, telemetry contracts.TelemetryCatalog, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger, build SourceBuilder) *Runner {
+// NewRunnerWithBuilder allows tests to inject a SourceBuilder and optional SourceSession.
+func NewRunnerWithBuilder(repo RunStore, telemetry contracts.TelemetryCatalog, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger, build SourceBuilder, sessions SourceSession) *Runner {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if build == nil {
 		build = sources.Build
 	}
-	return &Runner{repo: repo, telemetry: telemetry, sink: sink, state: state, logger: logger, buildFn: build}
+	if sessions == nil {
+		sessions = NewEphemeral(build)
+	}
+	return &Runner{repo: repo, telemetry: telemetry, sink: sink, state: state, logger: logger, sessions: sessions}
 }
 
 // Execute runs one load end-to-end.
@@ -67,28 +71,21 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 		log.Error("resolve params", "category", "connect", "err", err)
 		return err
 	}
-	src, err := r.buildFn(contracts.SourceConfig{
+	srcCfg := contracts.SourceConfig{
 		SourceID:   load.SourceID,
 		SourceType: load.Source.Kind,
 		Name:       load.Source.Name,
 		Params:     params,
 		Telemetry:  r.telemetry,
-	})
+	}
+	src, release, err := r.sessions.Obtain(ctx, srcCfg)
 	if err != nil {
-		log.Error("build source", "category", "connect", "err", err)
+		log.Error("obtain source", "category", "connect", "err", err)
 		return err
 	}
-	defer func() {
-		if err := src.Close(); err != nil {
-			log.Warn("close source", "category", "connect", "err", err)
-		}
-	}()
-
-	if err := src.Open(ctx); err != nil {
-		log.Error("open source", "category", "connect", "err", err)
-		return err
-	}
-	log.Debug("source opened", "category", "connect")
+	invalidate := false
+	defer func() { release(invalidate) }()
+	log.Debug("source ready", "category", "connect")
 
 	wm, err := r.repo.GetWatermark(ctx, load.ID)
 	if err != nil {
@@ -117,44 +114,46 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 	target := contracts.TargetTable{Schema: load.TargetSchema, Name: load.TargetTable}
 	mode := contracts.LoadMode(load.Mode)
 	loadTS := time.Now().UTC()
+	targetLabel := fmt.Sprintf("%s.%s", target.Schema, target.Name)
 
-	// D-05: for replace, truncate before reading so a zero-row source still
-	// clears stale data. Atomic staging (ADR-020) is deferred.
+	var repl *replaceSession
 	if mode == contracts.LoadModeReplace {
-		exists, err := r.sink.TableExists(ctx, target)
-		if err != nil {
+		repl = newReplaceSession(r.sink, target)
+		if err := repl.prepareExisting(ctx, r.sink, log); err != nil {
 			_ = r.repo.FinishRun(ctx, run, "failed", 0, 0, current.Value, err.Error())
 			r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), 0, 0, err.Error())
+			log.Error("prepare replace", "category", "write", "err", err)
 			return err
 		}
-		if exists {
-			if err := r.sink.Truncate(ctx, target); err != nil {
-				_ = r.repo.FinishRun(ctx, run, "failed", 0, 0, current.Value, err.Error())
-				r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), 0, 0, err.Error())
-				log.Error("truncate target", "category", "write", "err", err)
-				return fmt.Errorf("truncate target: %w", err)
-			}
-			log.Info("target truncated", "category", "write")
-		}
+		defer repl.abort(ctx)
 	}
 
 	var rowsWritten int64
 	firstBatch := true
+	writeTarget := target
+	if repl != nil {
+		writeTarget = repl.writeTo
+	}
 
 	handler := func(ctx context.Context, batch contracts.Batch) error {
 		if firstBatch {
-			if load.AutoCreateTable {
+			if mode == contracts.LoadModeReplace {
+				if err := repl.ensureFirstBatch(ctx, r.sink, load.AutoCreateTable, batch.Columns, log); err != nil {
+					return err
+				}
+				writeTarget = repl.writeTo
+			} else if load.AutoCreateTable {
 				if err := r.sink.EnsureTable(ctx, target, batch.Columns); err != nil {
 					return fmt.Errorf("ensure target: %w", err)
 				}
 				log.Debug("target ensured",
 					"category", "write",
-					"target", fmt.Sprintf("%s.%s", target.Schema, target.Name),
+					"target", targetLabel,
 				)
 			}
 			firstBatch = false
 		}
-		n, err := r.sink.WriteBatch(ctx, target, batch, loadTS)
+		n, err := r.sink.WriteBatch(ctx, writeTarget, batch, loadTS)
 		if err != nil {
 			return err
 		}
@@ -177,9 +176,9 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 		LastWatermark:   current,
 		BatchSize:       load.BatchSize,
 	}
-	targetLabel := fmt.Sprintf("%s.%s", target.Schema, target.Name)
 	result, err := src.Read(ctx, loadCfg, handler)
 	if err != nil {
+		invalidate = true // drop pooled connection after read failures (ADR-021)
 		_ = r.repo.FinishRun(ctx, run, "failed", result.RowsRead, rowsWritten, current.Value, err.Error())
 		r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), result.RowsRead, rowsWritten, err.Error())
 		metrics.ObserveRun(load.Name, "failed", targetLabel, result.RowsRead, rowsWritten, run.StartedAt)
@@ -190,6 +189,16 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 			"rows_written", rowsWritten,
 		)
 		return err
+	}
+
+	if repl != nil {
+		if err := repl.commit(ctx, log); err != nil {
+			_ = r.repo.FinishRun(ctx, run, "failed", result.RowsRead, rowsWritten, current.Value, err.Error())
+			r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), result.RowsRead, rowsWritten, err.Error())
+			metrics.ObserveRun(load.Name, "failed", targetLabel, result.RowsRead, rowsWritten, run.StartedAt)
+			log.Error("commit replace", "category", "write", "err", err)
+			return err
+		}
 	}
 
 	newWMValue := result.NewWatermark.Value

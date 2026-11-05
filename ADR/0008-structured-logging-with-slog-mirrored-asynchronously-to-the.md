@@ -36,5 +36,5 @@ Positive:
 
 Negative:
 
-- DB logs can be lost under pressure. Phase 2 adds a dropped-entries counter.
-- The implementation currently loses `With` attributes (D-01) and panics after `Close` (D-02). Both are Phase 2 fixes.
+- DB logs can be lost under pressure; `loader_dblog_dropped_total` counts overflows (Phase 2).
+- D-01 (`With` attrs) and D-02 (panic after `Close`) were fixed in Phase 2.
