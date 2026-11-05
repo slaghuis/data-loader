@@ -1,6 +1,7 @@
 package seed
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 
@@ -70,34 +71,10 @@ func Load(path string) (*File, error) {
 		return nil, fmt.Errorf("read seed file: %w", err)
 	}
 	var f File
-	dec := yaml.NewDecoder(newStrictReader(b))
-	dec.KnownFields(true) // fail on unknown keys — catches typos early
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true) // fail on unknown keys — catches typos early (D-06)
 	if err := dec.Decode(&f); err != nil {
 		return nil, fmt.Errorf("parse seed file: %w", err)
 	}
 	return &f, nil
 }
-
-// newStrictReader is a trivial wrapper — kept as a hook if you later want to
-// preprocess (env-var expansion, includes, etc.).
-func newStrictReader(b []byte) *bytesReader { return &bytesReader{b: b} }
-
-type bytesReader struct {
-	b []byte
-	i int
-}
-
-func (r *bytesReader) Read(p []byte) (int, error) {
-	if r.i >= len(r.b) {
-		return 0, fmtEOF
-	}
-	n := copy(p, r.b[r.i:])
-	r.i += n
-	return n, nil
-}
-
-var fmtEOF = fmtErr("EOF")
-
-type fmtErr string
-
-func (e fmtErr) Error() string { return string(e) }

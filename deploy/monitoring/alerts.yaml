@@ -1,0 +1,53 @@
+groups:
+  - name: data-loader
+    rules:
+      - alert: DataLoaderNotReady
+        expr: up{job="data-loader"} == 0 or probe_success{job="data-loader-readyz"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "data-loader /readyz failing"
+          description: "Health probe for data-loader has been down for more than 2 minutes."
+
+      - alert: DataLoaderRunStale
+        expr: |
+          (time() - loader_last_success_timestamp_seconds) > 3 * 300
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: "Load {{ $labels.load }} has not succeeded recently"
+          description: "No successful run within ~3 schedule intervals (default 5m assumed; tune per load)."
+
+      - alert: DataLoaderRunFailures
+        expr: increase(loader_runs_total{status="failed"}[15m]) >= 3
+        for: 0m
+        labels:
+          severity: high
+        annotations:
+          summary: "Load {{ $labels.load }} failing repeatedly"
+          description: "At least three failed runs in 15 minutes."
+
+      - alert: DataLoaderTelemetryBadQuality
+        expr: |
+          (
+            rate(loader_telemetry_bad_quality_total[15m])
+            /
+            clamp_min(rate(loader_rows_read_total[15m]), 1e-9)
+          ) > 0.20
+        for: 15m
+        labels:
+          severity: medium
+        annotations:
+          summary: "High bad-quality ratio for {{ $labels.load }}"
+          description: "More than 20% of telemetry readings are quality=bad over 15 minutes."
+
+      - alert: DataLoaderDBLogDropped
+        expr: increase(loader_dblog_dropped_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: "DB log buffer is dropping entries"
+          description: "loader_dblog_dropped_total is increasing; metadata DB may be slow."

@@ -93,7 +93,7 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 		return result, nil
 	}
 
-	query, args, err := buildQuery(load)
+	query, args, newWM, err := s.buildQuery(ctx, load)
 	if err != nil {
 		return result, err
 	}
@@ -125,17 +125,11 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 		colNames[i] = ct.Name()
 	}
 
-	batch := contracts.Batch{Columns: columns, Rows: make([]contracts.Row, 0, load.BatchSize)}
-	newWatermark := load.LastWatermark
-	watermarkColIdx := -1
-	if load.Mode == contracts.LoadModeDelta && load.WatermarkColumn != "" {
-		for i, n := range colNames {
-			if strings.EqualFold(n, load.WatermarkColumn) {
-				watermarkColIdx = i
-				break
-			}
-		}
+	batchSize := load.BatchSize
+	if batchSize <= 0 {
+		batchSize = 1000
 	}
+	batch := contracts.Batch{Columns: columns, Rows: make([]contracts.Row, 0, batchSize)}
 
 	var rowsRead int64
 	for rows.Next() {
@@ -155,14 +149,7 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 		batch.Rows = append(batch.Rows, row)
 		rowsRead++
 
-		if watermarkColIdx >= 0 {
-			if v := values[watermarkColIdx]; v != nil {
-				newWatermark.Value = formatWatermark(v, load.WatermarkType)
-				newWatermark.Type = load.WatermarkType
-			}
-		}
-
-		if len(batch.Rows) >= load.BatchSize {
+		if len(batch.Rows) >= batchSize {
 			if err := handler(ctx, batch); err != nil {
 				return result, err
 			}
@@ -180,7 +167,7 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 	}
 
 	result.RowsRead = rowsRead
-	result.NewWatermark = newWatermark
+	result.NewWatermark = newWM
 	result.FinishedAt = time.Now().UTC()
 	return result, nil
 }
@@ -234,35 +221,44 @@ func buildDSN(params map[string]string) (string, error) {
 	return u.String(), nil
 }
 
-// buildQuery builds a Postgres SELECT with $1 placeholders and proper quoting.
-func buildQuery(load contracts.LoadConfig) (string, []any, error) {
+// buildQuery builds a Postgres SELECT with $1/$2 placeholders and proper quoting.
+// For delta loads it snapshots MAX(watermark) before reading so mid-load inserts
+// with a higher watermark are deferred to the next run (D-18).
+func (s *Source) buildQuery(ctx context.Context, load contracts.LoadConfig) (string, []any, contracts.Watermark, error) {
 	obj, err := sqlident.QuotePostgresQualified(load.ObjectName)
 	if err != nil {
-		return "", nil, err
+		return "", nil, contracts.Watermark{}, err
 	}
 	base := fmt.Sprintf("SELECT * FROM %s", obj)
 
-	if load.Mode == contracts.LoadModeDelta && load.WatermarkColumn != "" && load.LastWatermark.Value != "" {
-		if err := sqlident.Validate(load.WatermarkColumn); err != nil {
-			return "", nil, fmt.Errorf("watermark column: %w", err)
-		}
-		typed, err := parseWatermark(load.LastWatermark)
-		if err != nil {
-			return "", nil, err
-		}
-		wm := sqlident.QuotePostgres(load.WatermarkColumn)
-		q := fmt.Sprintf(`%s WHERE %s > $1 ORDER BY %s ASC`, base, wm, wm)
-		return q, []any{typed}, nil
+	if load.Mode == contracts.LoadModeAppend || load.Mode == contracts.LoadModeReplace {
+		return base, nil, contracts.Watermark{Type: contracts.WatermarkNone}, nil
 	}
-	if load.Mode == contracts.LoadModeDelta && load.WatermarkColumn != "" {
-		if err := sqlident.Validate(load.WatermarkColumn); err != nil {
-			return "", nil, fmt.Errorf("watermark column: %w", err)
-		}
-		wm := sqlident.QuotePostgres(load.WatermarkColumn)
-		q := fmt.Sprintf(`%s ORDER BY %s ASC`, base, wm)
-		return q, nil, nil
+
+	if load.WatermarkColumn == "" || load.WatermarkType == contracts.WatermarkNone {
+		return "", nil, contracts.Watermark{}, fmt.Errorf("delta load requires watermark column and type")
 	}
-	return base, nil, nil
+	if err := sqlident.Validate(load.WatermarkColumn); err != nil {
+		return "", nil, contracts.Watermark{}, fmt.Errorf("watermark column: %w", err)
+	}
+	wm := sqlident.QuotePostgres(load.WatermarkColumn)
+
+	upper, err := s.currentMaxWatermark(ctx, load.ObjectName, load.WatermarkColumn, load.WatermarkType)
+	if err != nil {
+		return "", nil, contracts.Watermark{}, err
+	}
+
+	last, err := parseWatermark(load.LastWatermark)
+	if err != nil {
+		return "", nil, contracts.Watermark{}, err
+	}
+	upperArg, err := parseWatermark(upper)
+	if err != nil {
+		return "", nil, contracts.Watermark{}, err
+	}
+
+	q := fmt.Sprintf(`%s WHERE %s > $1 AND %s <= $2 ORDER BY %s ASC`, base, wm, wm, wm)
+	return q, []any{last, upperArg}, upper, nil
 }
 
 func parseWatermark(w contracts.Watermark) (any, error) {
@@ -273,17 +269,6 @@ func parseWatermark(w contracts.Watermark) (any, error) {
 		return w.Value, nil
 	default:
 		return w.Value, nil
-	}
-}
-
-func formatWatermark(v any, t contracts.WatermarkType) string {
-	switch val := v.(type) {
-	case time.Time:
-		return val.UTC().Format(time.RFC3339Nano)
-	case []byte:
-		return string(val)
-	default:
-		return fmt.Sprintf("%v", val)
 	}
 }
 

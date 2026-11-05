@@ -1,0 +1,89 @@
+{
+  "title": "data-loader",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Runs by status",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(loader_runs_total[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Run duration",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, load) (rate(loader_run_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{load}} p95"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Rows read / written",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (load) (rate(loader_rows_read_total[5m]))",
+          "legendFormat": "read {{load}}"
+        },
+        {
+          "expr": "sum by (load) (rate(loader_rows_written_total[5m]))",
+          "legendFormat": "written {{load}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Watermark lag (datetime)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "loader_watermark_lag_seconds",
+          "legendFormat": "{{load}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "DB log drops",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "loader_dblog_dropped_total",
+          "legendFormat": "dropped"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Overlap skips",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum by (load) (rate(loader_overlap_skips_total[5m]))",
+          "legendFormat": "{{load}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Telemetry bad quality",
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum by (load) (rate(loader_telemetry_bad_quality_total[5m]))",
+          "legendFormat": "{{load}}"
+        }
+      ]
+    }
+  ]
+}

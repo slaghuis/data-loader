@@ -164,12 +164,15 @@ flowchart TB
     REG --> PG["postgres"]
     REG --> MB["modbus"]
     REG --> UA["opcua"]
-    MB -.->|"ListModbusTags (global)"| REPO
-    UA -.->|"ListOPCUANodes (global)"| REPO
+    RUNNER -->|"SourceConfig.Telemetry"| MB
+    RUNNER -->|"SourceConfig.Telemetry"| UA
+    MB -.->|ListModbusTags| REPO
+    UA -.->|ListOPCUANodes| REPO
     RUNNER -->|EnsureTable / Truncate / WriteBatch| SINK
     RUNNER -->|watermark, StartRun, FinishRun| REPO
     RUNNER --> RS["runstate.Registry"]
     HS --> RS
+    HS -->|"/metrics"| PROM[Prometheus]
     HK -->|PruneLogEntries, PruneLoadRuns| REPO
     DBH -->|async Log| REPO
 ```
@@ -1201,6 +1204,7 @@ opcua_nodes: [ { load: mill.telemetry, tag_name: mill_speed, node_id: "ns=2;s=Mi
 - `/healthz` — process alive (liveness).
 - `/readyz` — metadata DB and sink ping < 2 s (readiness). *(P4: per-sink, remote sinks reported but not failing readiness.)*
 - `/status` — per-load last outcome for dashboards and support.
+- `/metrics` — Prometheus exposition (Phase 2).
 
 ## Metrics *(Phase 2: Prometheus `/metrics` on the health server)*
 

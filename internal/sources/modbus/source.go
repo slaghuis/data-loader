@@ -14,24 +14,12 @@ import (
 	mb "github.com/simonvetter/modbus"
 
 	"github.com/slaghuis/data-loader/internal/logging"
-	"github.com/slaghuis/data-loader/internal/metadata"
+	"github.com/slaghuis/data-loader/internal/metrics"
 	"github.com/slaghuis/data-loader/internal/sources"
 	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
 const kind = "modbus"
-
-// Repository accessor is package-private for this module.
-// The pipeline injects it (see wiring section) so the source can load its tag list.
-var tagRepo TagRepository
-
-// TagRepository is the minimum contract this module needs from the metadata repo.
-type TagRepository interface {
-	ListModbusTags(ctx context.Context, loadID int64) ([]metadata.ModbusTag, error)
-}
-
-// SetTagRepository is called once at startup from main.go.
-func SetTagRepository(r TagRepository) { tagRepo = r }
 
 func init() {
 	sources.Register(kind, New)
@@ -101,11 +89,11 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 	start := time.Now().UTC()
 	result := contracts.ReadResult{StartedAt: start}
 
-	if tagRepo == nil {
-		return result, fmt.Errorf("modbus tag repository not configured")
+	if s.cfg.Telemetry == nil {
+		return result, fmt.Errorf("modbus telemetry catalog not configured")
 	}
 
-	tags, err := tagRepo.ListModbusTags(ctx, load.LoadID)
+	tags, err := s.cfg.Telemetry.ListModbusTags(ctx, load.LoadID)
 	if err != nil {
 		return result, fmt.Errorf("load tags: %w", err)
 	}
@@ -177,6 +165,14 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 		result.RowsRead++
 	}
 
+	bad := 0
+	for _, row := range rows {
+		if q, _ := row["quality"].(string); q == "bad" {
+			bad++
+		}
+	}
+	metrics.ObserveBadQuality(load.Name, bad)
+
 	batch := contracts.Batch{Columns: columns, Rows: rows}
 	if err := handler(ctx, batch); err != nil {
 		return result, err
@@ -188,7 +184,7 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 
 // ---- reading & decoding ----
 
-func readTagInto(c *mb.ModbusClient, tag metadata.ModbusTag, row contracts.Row) error {
+func readTagInto(c *mb.ModbusClient, tag contracts.ModbusPoint, row contracts.Row) error {
 	switch strings.ToLower(tag.RegisterType) {
 	case "coil":
 		vals, err := c.ReadCoils(tag.Address, 1)
@@ -214,7 +210,7 @@ func readTagInto(c *mb.ModbusClient, tag metadata.ModbusTag, row contracts.Row) 
 	}
 }
 
-func readRegisters(c *mb.ModbusClient, tag metadata.ModbusTag, row contracts.Row) error {
+func readRegisters(c *mb.ModbusClient, tag contracts.ModbusPoint, row contracts.Row) error {
 	regType := mb.HOLDING_REGISTER
 	if strings.ToLower(tag.RegisterType) == "input" {
 		regType = mb.INPUT_REGISTER

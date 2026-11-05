@@ -16,17 +16,21 @@ import (
 	"github.com/slaghuis/data-loader/internal/housekeeping"
 	"github.com/slaghuis/data-loader/internal/logging"
 	"github.com/slaghuis/data-loader/internal/metadata"
+	"github.com/slaghuis/data-loader/internal/metrics"
 	"github.com/slaghuis/data-loader/internal/pipeline"
 	"github.com/slaghuis/data-loader/internal/reload"
 	"github.com/slaghuis/data-loader/internal/runstate"
 	"github.com/slaghuis/data-loader/internal/scheduler"
 	"github.com/slaghuis/data-loader/internal/sink"
 
-	modbussrc "github.com/slaghuis/data-loader/internal/sources/modbus"
-	opcuasrc "github.com/slaghuis/data-loader/internal/sources/opcua"
+	_ "github.com/slaghuis/data-loader/internal/sources/modbus"
+	_ "github.com/slaghuis/data-loader/internal/sources/opcua"
 	_ "github.com/slaghuis/data-loader/internal/sources/postgres"
 	_ "github.com/slaghuis/data-loader/internal/sources/sqlserver"
 )
+
+// version is injected at link time via -ldflags "-X main.version=…".
+var version = "dev"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
@@ -55,18 +59,17 @@ func runServer() int {
 	}
 	repo := metadata.NewRepository(gdb)
 
-	modbussrc.SetTagRepository(repo)
-	opcuasrc.SetNodeRepository(repo)
-
 	// Upgrade the default logger to also persist to the DB.
 	baseHandler := slog.Default().Handler()
 	dbHandler := logging.NewDBHandler(baseHandler, repo, 512)
+	metrics.RegisterDBLogDropped(dbHandler.Dropped)
 	appLogger := slog.New(dbHandler)
 	slog.SetDefault(appLogger)
 
 	appLogger.Info("data-loader starting",
 		"log_level", cfg.LogLevel,
 		"log_format", cfg.LogFormat,
+		"version", version,
 	)
 
 	// Sink
@@ -87,8 +90,8 @@ func runServer() int {
 	// Run state registry
 	state := runstate.New()
 
-	// Pipeline & Scheduler
-	runner := pipeline.NewRunner(repo, sk, state, appLogger)
+	// Pipeline & Scheduler (repo satisfies TelemetryCatalog for modbus/opcua).
+	runner := pipeline.NewRunner(repo, repo, sk, state, appLogger)
 	sch := scheduler.New(repo, runner, state, appLogger,
 		time.Duration(cfg.ShutdownTimeoutSec)*time.Second)
 	if err := sch.Load(ctx); err != nil {
@@ -101,7 +104,7 @@ func runServer() int {
 	// Health server
 	var hs *health.Server
 	if cfg.HealthEnabled {
-		hs = health.New(cfg.HealthAddr, state, gdb, sk.DB(), "dev", appLogger)
+		hs = health.New(cfg.HealthAddr, state, gdb, sk.DB(), version, appLogger)
 		if err := hs.Start(); err != nil {
 			appLogger.Error("start health server", "err", err)
 			return 1

@@ -9,6 +9,8 @@ type SourceConfig struct {
 	SourceType string // "sqlserver", "postgres", "modbus", "opcua"
 	Name       string
 	Params     map[string]string // decrypted connection details
+	// Telemetry is required for modbus/opcua sources (D-14). Nil for SQL sources.
+	Telemetry TelemetryCatalog
 }
 
 // LoadConfig describes a single data load (a job) that the source must execute.

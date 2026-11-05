@@ -33,8 +33,8 @@ The Phase 1 decisions were made while the loader was being built (from 2026-09-1
 | [ADR-017](../ADR/0017-schema-discovery-and-preview-as-optional-source-capabilities.md) | Schema discovery and preview as optional source capabilities | Proposed | 3 |
 | [ADR-018](../ADR/0018-multi-sink-delivery-direct-fan-out-plus-store-and-forward.md) | Multi-sink delivery: direct fan-out plus store-and-forward | Proposed | 4 |
 | [ADR-019](../ADR/0019-microsoft-fabric-through-an-open-mirroring-landing-zone.md) | Microsoft Fabric through an Open Mirroring landing zone | Proposed — spike required | 4 |
-| ADR-020 | Atomic `replace` through a staging table and swap (D-05) | To be written | 2 |
-| ADR-021 | Source connection reuse across runs (D-17) | To be written | 2 |
+| [ADR-020](../ADR/0020-atomic-replace-through-a-staging-table-and-swap.md) | Atomic `replace` through a staging table and swap (D-05) | Proposed | 2 |
+| [ADR-021](../ADR/0021-source-connection-reuse-across-runs.md) | Source connection reuse across runs (D-17) | Proposed | 2 |
 
 ## Writing a new ADR
 

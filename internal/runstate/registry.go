@@ -1,6 +1,7 @@
 package runstate
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -92,7 +93,7 @@ func (r *Registry) MarkFinished(loadID int64, status string, finishedAt time.Tim
 	s.LastError = errMsg
 }
 
-// Snapshot returns a copy of all load states, sorted for stable output.
+// Snapshot returns a copy of all load states, sorted by LoadID (D-11).
 func (r *Registry) Snapshot() []LoadState {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -100,5 +101,6 @@ func (r *Registry) Snapshot() []LoadState {
 	for _, s := range r.loads {
 		out = append(out, *s)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].LoadID < out[j].LoadID })
 	return out
 }

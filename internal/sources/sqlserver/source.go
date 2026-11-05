@@ -192,32 +192,12 @@ func (s *Source) buildQuery(ctx context.Context, load contracts.LoadConfig) (str
 		return "", nil, contracts.Watermark{}, err
 	}
 
-	// First run (no previous watermark): initialize from current max WITHOUT
-	// reading any data. This prevents accidentally back-loading a huge table.
-	// The user can trigger an explicit full load if they want history.
-	if load.LastWatermark.Value == "" {
-		return "", nil, upper, errFirstRunInit{watermark: upper}
-	}
-
+	// First-run is handled in Read before buildQuery is called.
 	q := fmt.Sprintf(
 		"SELECT * FROM %s WHERE %s > @p1 AND %s <= @p2 ORDER BY %s",
 		obj, wmCol, wmCol, wmCol,
 	)
 	return q, []any{load.LastWatermark.Value, upper.Value}, upper, nil
-}
-
-// errFirstRunInit signals that the caller should persist the returned watermark
-// without reading rows (first-run initialization).
-type errFirstRunInit struct{ watermark contracts.Watermark }
-
-func (e errFirstRunInit) Error() string { return "first-run watermark initialization" }
-
-// IsFirstRunInit lets the pipeline detect this special case.
-func IsFirstRunInit(err error) (contracts.Watermark, bool) {
-	if e, ok := err.(errFirstRunInit); ok {
-		return e.watermark, true
-	}
-	return contracts.Watermark{}, false
 }
 
 // currentMaxWatermark returns MAX(watermark_column) as a string.
