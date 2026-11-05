@@ -7,7 +7,7 @@ sources:
       database: ERP
       user: reader
       password: $env:ERP_PW
-    enabled: true
+    is_enabled: true
 
 loads:
   - source: erp-prod
@@ -21,4 +21,4 @@ loads:
     batch_size: 1000
     auto_create_table: true
     cron_expression: "@every 5m"
-    enabled: true
+    is_enabled: true

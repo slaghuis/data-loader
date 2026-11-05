@@ -78,10 +78,10 @@ Built iteratively between 2026-09-16 and 2026-10-14. These items reconstruct wha
 
 - [x] Add a `.gitattributes` file (`* text=auto eol=lf`), then renormalise line endings and run `gofmt -w` in a single commit with no logic changes.
 - [x] Add a `.golangci.yml` file enabling `errcheck`, `govet`, `staticcheck`, `revive` (exported-symbol docs), `gosec`, `bodyclose`, `contextcheck`, `errorlint`, `gocyclo` (threshold 15) and `misspell`.
-- [ ] Remove dead code: `config.ResolveSecrets`, the unreachable `errFirstRunInit` / `IsFirstRunInit` path in `sqlserver` (D-13). *(D-10 dead `sql.ErrNoRows` branch removed with the runner fix.)*
-- [ ] Inject the build version with `-ldflags "-X main.version=…"` and report it in `/status` (D-12).
+- [x] Remove dead code: `config.ResolveSecrets`, the unreachable `errFirstRunInit` / `IsFirstRunInit` path in `sqlserver` (D-13). *(D-10 dead `sql.ErrNoRows` branch removed with the runner fix.)*
+- [x] Inject the build version with `-ldflags "-X main.version=…"` and report it in `/status` (D-12).
 - [x] Rename `README.MD` to `README.md` (the design indexer's include pattern is case-sensitive).
-- [ ] Split the README's module design notes into `docs/modules/*.md`.
+- [x] Split the README's module design notes into `docs/modules/*.md`.
 
 ### 2.2 Defect register
 
@@ -96,25 +96,25 @@ Status key: ✅ closed · 🟡 partial · ⬜ open.
 | D-03 | **High** | ✅ | `sqlserver/source.go` | Numeric watermark via `float64` + `%v`. | `CONVERT(varchar(40), MAX(col))` + `NullString`. Tests in `dsn_test.go`. |
 | D-04 | Medium | ✅ | `pipeline/runner.go` | Failed `UpsertWatermark` still marks success. | Fail the run. Regression: `TestRunner_UpsertWatermarkFailure_FailsRun_D04`. |
 | D-05 | Medium | 🟡 | `pipeline/runner.go` | `replace` skipped truncate on zero rows. | Truncate **before** `Read` when the table exists. Atomic staging deferred (ADR-020, not written). Regressions: `TestRunner_Replace_*_D05`. |
-| D-06 | Low | ⬜ | `seeds/seed.yaml` | Uses `enabled:` instead of `is_enabled:`. | Fix sample + parse-all-seeds test. |
+| D-06 | Low | ✅ | `seeds/seed.yaml` | Uses `enabled:` instead of `is_enabled:`. | Fix sample + parse-all-seeds test. |
 | D-07 | Medium | ✅ | `internal/sqlident`, sources, sink | Identifier quoting / validation gaps. | `Validate` + `QuoteMSSQL` / `QuotePostgres`; fuzz test. |
 | D-08 | Medium | ✅ | `sqlserver/source.go` `buildDSN` | Unescaped DSN. | `net/url` builder. Regression: `TestBuildDSN_EscapesSpecialPassword_D08`. |
 | D-09 | Medium | ✅ | `scheduler/scheduler.go` | Shutdown leaves `running` rows. | Scheduler context + `AbortRunningRuns` on start/stop. Regressions in `scheduler_test.go`. |
 | D-10 | Low | ✅ | `runner.go` | Dead `sql.ErrNoRows` branch. | Removed with D-04/D-05 runner rewrite. |
-| D-11 | Low | ⬜ | `runstate/registry.go` | Unsorted `/status` snapshot. | Sort by `LoadID`. |
-| D-12 | Low | ⬜ | `cmd/loader/main.go` | Hard-coded `"dev"` version. | ldflags injection. |
-| D-13 | Low | ⬜ | `config/secrets.go` | Unused `ResolveSecrets`. | Delete it. |
-| D-14 | Low | ⬜ | modbus/opcua | Package-level repo globals. | Inject `PointCatalog`. |
+| D-11 | Low | ✅ | `runstate/registry.go` | Unsorted `/status` snapshot. | Sort by `LoadID`. |
+| D-12 | Low | ✅ | `cmd/loader/main.go` | Hard-coded `"dev"` version. | ldflags injection. |
+| D-13 | Low | ✅ | `config/secrets.go` | Unused `ResolveSecrets` / dead `IsFirstRunInit`. | Deleted. |
+| D-14 | Low | ✅ | modbus/opcua | Package-level repo globals. | Inject `contracts.TelemetryCatalog`. |
 | D-15 | Low | ✅ | all `*.go` | CRLF line endings. | `.gitattributes` + renormalise (done on main). |
 | D-16 | Medium | 🟡 | `pipeline.yaml` / `deploy/` | Missing deploy assets; coverage gate still 0. | `deploy/k8s` + `deploy/systemd` added. Leave `coverage_min: 0` / `integration.enabled: false` until coverage and integration land. |
-| D-17 | Info | 🟡 | runner / README | Per-run open/close. | README corrected earlier; connection cache = ADR-021. |
-| D-18 | Low | ⬜ | `postgres/source.go` | No upper-bound snapshot; numeric float path. | Align with SQL Server. *(Numeric string cast applied while fixing D-07; upper-bound still open.)* |
+| D-17 | Info | 🟡 | runner / README | Per-run open/close. | README corrected earlier; connection cache = ADR-021 (Proposed). |
+| D-18 | Low | ✅ | `postgres/source.go` | No upper-bound snapshot; numeric float path. | Align with SQL Server (`> $1 AND <= $2` + `::text` MAX). |
 | D-19 | Medium | ✅ | `metadata/repository.go` | Disabled source does not stop loads. | Join `meta_sources.is_enabled = 1`. |
 
 ### 2.3 Dependency injection and Clean Architecture
 
 - [x] Introduce narrow interfaces used by tests: `pipeline.RunStore`, `pipeline.SourceBuilder`, `logging.LogWriter`, `scheduler.RunAborter`. *(Full sweep — `LoadCatalog` / `Executor` / `Pruner` / clocks — still open.)*
-- [ ] Replace the Modbus/OPC UA repository globals with an injected `contracts.PointCatalog`, so the adapters no longer import `internal/metadata` (D-14).
+- [x] Replace the Modbus/OPC UA repository globals with an injected `contracts.TelemetryCatalog`, so the adapters no longer import `internal/metadata` (D-14).
 - [ ] Move domain rules (first-run initialisation, forced append, watermark advance) into tested functions in `pkg/contracts` or a new `internal/domain`.
 - [ ] Inject a clock (`func() time.Time`) where time affects behaviour (runner, housekeeping, watermark lag).
 
@@ -136,30 +136,31 @@ Status key: ✅ closed · 🟡 partial · ⬜ open.
 
 ### 2.6 Observability
 
-- [ ] Prometheus `/metrics` on the health server (metric list in [02 – Monitoring](02-architecture.md#monitoring-requirements)).
-- [ ] An alert rule file (`deploy/monitoring/alerts.yaml`) and a Grafana dashboard JSON.
-- [x] An in-process counter for dropped DB log records (`DBHandler.Dropped`). *(Prometheus export still open.)*
+- [x] Prometheus `/metrics` on the health server (metric list in [02 – Monitoring](02-architecture.md#monitoring-requirements)).
+- [x] An alert rule file (`deploy/monitoring/alerts.yaml`) and a Grafana dashboard JSON.
+- [x] An in-process counter for dropped DB log records (`DBHandler.Dropped`) exported as `loader_dblog_dropped_total`.
 
 ### 2.7 Delivery assets and CI
 
 - [x] `deploy/systemd/data-loader.service`, `deploy/k8s/` (Deployment with `replicas: 1`, `strategy: Recreate`, liveness probe on `/healthz`, readiness on `/readyz`, Secret-mounted environment).
-- [ ] `pipeline.yaml`: `coverage_min: 80`, `integration.enabled: true`.
-- [ ] Dockerfile review: distroless base image, non-root user, `HEALTHCHECK`.
+- [ ] `pipeline.yaml`: `coverage_min: 80`, `integration.enabled: true`. *(Deferred until coverage and integration suites exist.)*
+- [x] Dockerfile: distroless non-root image with `-ldflags` version injection. *(No Docker `HEALTHCHECK` — distroless has no shell; use k8s/systemd probes.)*
 
 ### 2.8 Documentation
 
 - [ ] Godoc on every exported identifier (enforced by `revive`).
-- [ ] Package `doc.go` for each package explaining its responsibility and invariants.
-- [ ] Runbook `docs/runbook.md`: stuck runs, watermark rewind, adding a site, rotating secrets.
+- [x] Package `doc.go` for core packages (pipeline, health, logging, metrics, runstate, contracts).
+- [x] Runbook `docs/runbook.md`: stuck runs, watermark rewind, adding a site, rotating secrets.
 - [x] Update this plan and the defect register as items close.
+- [x] Draft Proposed [ADR-020](../ADR/0020-atomic-replace-through-a-staging-table-and-swap.md) and [ADR-021](../ADR/0021-source-connection-reuse-across-runs.md) (awaiting review; not implemented).
 
 ### Phase 2 exit criteria
 
-1. All **High** and **Medium** defects closed, each with a regression test. — **High closed; Medium closed except D-05 atomicity (ADR-020) and D-16 coverage/integration gates.**
+1. All **High** and **Medium** defects closed, each with a regression test. — **High closed; Medium closed except D-05 atomicity (ADR-020 Proposed) and D-16 coverage/integration gates.**
 2. `golangci-lint run` and `gofmt -l` are clean. `go test -race ./...` passes with ≥ 80% coverage per package. — **Race green; coverage gate and lint-in-CI still open.**
 3. Integration suite green in CI for all four sources and the MSSQL sink. — **Open.**
-4. `/metrics` is live and the alert rules are committed. — **Open** (dropped counter exists in-process only).
-5. No package-level mutable dependencies remain, and the application layer depends only on interfaces. — **Partial** (`LogWriter` / `RunStore` / `SourceBuilder` / `RunAborter` in; Modbus/OPC UA globals remain).
+4. `/metrics` is live and the alert rules are committed. — **Done.**
+5. No package-level mutable dependencies remain, and the application layer depends only on interfaces. — **Modbus/OPC UA globals removed; remaining DI (clock, domain helpers) still open.**
 
 ---
 

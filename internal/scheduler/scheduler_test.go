@@ -43,7 +43,7 @@ func TestScheduler_Load_AbortsOrphans_D09(t *testing.T) {
 	repo := &fakeRepo{abortCount: 2, fingerprint: "fp1"}
 	sink := &testutil.FakeSink{}
 	store := &testutil.FakeRunStore{}
-	runner := pipeline.NewRunnerWithBuilder(store, sink, runstate.New(), slog.New(slog.NewTextHandler(io.Discard, nil)),
+	runner := pipeline.NewRunnerWithBuilder(store, nil, sink, runstate.New(), slog.New(slog.NewTextHandler(io.Discard, nil)),
 		func(cfg contracts.SourceConfig) (contracts.Source, error) {
 			return &testutil.FakeSource{KindName: "fake"}, nil
 		})
@@ -64,7 +64,7 @@ func TestScheduler_Stop_AbortsRunning_D09(t *testing.T) {
 	repo := &fakeRepo{fingerprint: "fp1", abortCount: 1}
 	sink := &testutil.FakeSink{}
 	store := &testutil.FakeRunStore{}
-	runner := pipeline.NewRunnerWithBuilder(store, sink, runstate.New(), slog.New(slog.NewTextHandler(io.Discard, nil)),
+	runner := pipeline.NewRunnerWithBuilder(store, nil, sink, runstate.New(), slog.New(slog.NewTextHandler(io.Discard, nil)),
 		func(cfg contracts.SourceConfig) (contracts.Source, error) {
 			return &testutil.FakeSource{KindName: "fake"}, nil
 		})

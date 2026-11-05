@@ -57,7 +57,7 @@ func TestRunner_UpsertWatermarkFailure_FailsRun_D04(t *testing.T) {
 	load.WatermarkType = string(contracts.WatermarkNumeric)
 	store.Watermark = &metadata.Watermark{Value: "50"}
 
-	r := pipeline.NewRunnerWithBuilder(store, sink, runstate.New(), testLogger(),
+	r := pipeline.NewRunnerWithBuilder(store, nil, sink, runstate.New(), testLogger(),
 		func(cfg contracts.SourceConfig) (contracts.Source, error) { return src, nil })
 
 	err := r.Execute(context.Background(), load)
@@ -79,7 +79,7 @@ func TestRunner_Replace_TruncatesBeforeRead_ZeroRows_D05(t *testing.T) {
 			return contracts.ReadResult{}, nil
 		},
 	}
-	r := pipeline.NewRunnerWithBuilder(store, sink, runstate.New(), testLogger(),
+	r := pipeline.NewRunnerWithBuilder(store, nil, sink, runstate.New(), testLogger(),
 		func(cfg contracts.SourceConfig) (contracts.Source, error) { return src, nil })
 
 	if err := r.Execute(context.Background(), sampleLoad(string(contracts.LoadModeReplace))); err != nil {
@@ -97,7 +97,7 @@ func TestRunner_Replace_NoTable_SkipsTruncate_D05(t *testing.T) {
 	store := &testutil.FakeRunStore{}
 	sink := &testutil.FakeSink{Exists: false}
 	src := &testutil.FakeSource{KindName: "fake"}
-	r := pipeline.NewRunnerWithBuilder(store, sink, runstate.New(), testLogger(),
+	r := pipeline.NewRunnerWithBuilder(store, nil, sink, runstate.New(), testLogger(),
 		func(cfg contracts.SourceConfig) (contracts.Source, error) { return src, nil })
 
 	if err := r.Execute(context.Background(), sampleLoad(string(contracts.LoadModeReplace))); err != nil {

@@ -11,12 +11,13 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gorm.io/gorm"
 
 	"github.com/slaghuis/data-loader/internal/runstate"
 )
 
-// Server exposes /healthz, /readyz, /status.
+// Server exposes /healthz, /readyz, /status, /metrics.
 type Server struct {
 	addr    string
 	logger  *slog.Logger
@@ -52,6 +53,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/readyz", s.handleReadyz)
 	mux.HandleFunc("/status", s.handleStatus)
+	mux.Handle("/metrics", promhttp.Handler())
 
 	s.srv = &http.Server{
 		Addr:              s.addr,

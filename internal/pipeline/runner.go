@@ -9,6 +9,7 @@ import (
 	"github.com/slaghuis/data-loader/internal/config"
 	"github.com/slaghuis/data-loader/internal/logging"
 	"github.com/slaghuis/data-loader/internal/metadata"
+	"github.com/slaghuis/data-loader/internal/metrics"
 	"github.com/slaghuis/data-loader/internal/runstate"
 	"github.com/slaghuis/data-loader/internal/sources"
 	"github.com/slaghuis/data-loader/pkg/contracts"
@@ -16,27 +17,29 @@ import (
 
 // Runner executes a single load against a Source and Sink.
 type Runner struct {
-	repo    RunStore
-	sink    contracts.Sink
-	state   *runstate.Registry
-	logger  *slog.Logger
-	buildFn SourceBuilder
+	repo      RunStore
+	telemetry contracts.TelemetryCatalog
+	sink      contracts.Sink
+	state     *runstate.Registry
+	logger    *slog.Logger
+	buildFn   SourceBuilder
 }
 
 // NewRunner wires the production source registry as the SourceBuilder.
-func NewRunner(repo RunStore, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger) *Runner {
-	return NewRunnerWithBuilder(repo, sink, state, logger, sources.Build)
+// telemetry may be nil when no modbus/opcua loads are used.
+func NewRunner(repo RunStore, telemetry contracts.TelemetryCatalog, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger) *Runner {
+	return NewRunnerWithBuilder(repo, telemetry, sink, state, logger, sources.Build)
 }
 
 // NewRunnerWithBuilder allows tests to inject a SourceBuilder.
-func NewRunnerWithBuilder(repo RunStore, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger, build SourceBuilder) *Runner {
+func NewRunnerWithBuilder(repo RunStore, telemetry contracts.TelemetryCatalog, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger, build SourceBuilder) *Runner {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if build == nil {
 		build = sources.Build
 	}
-	return &Runner{repo: repo, sink: sink, state: state, logger: logger, buildFn: build}
+	return &Runner{repo: repo, telemetry: telemetry, sink: sink, state: state, logger: logger, buildFn: build}
 }
 
 // Execute runs one load end-to-end.
@@ -69,6 +72,7 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 		SourceType: load.Source.Kind,
 		Name:       load.Source.Name,
 		Params:     params,
+		Telemetry:  r.telemetry,
 	})
 	if err != nil {
 		log.Error("build source", "category", "connect", "err", err)
@@ -173,10 +177,12 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 		LastWatermark:   current,
 		BatchSize:       load.BatchSize,
 	}
+	targetLabel := fmt.Sprintf("%s.%s", target.Schema, target.Name)
 	result, err := src.Read(ctx, loadCfg, handler)
 	if err != nil {
 		_ = r.repo.FinishRun(ctx, run, "failed", result.RowsRead, rowsWritten, current.Value, err.Error())
 		r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), result.RowsRead, rowsWritten, err.Error())
+		metrics.ObserveRun(load.Name, "failed", targetLabel, result.RowsRead, rowsWritten, run.StartedAt)
 		log.Error("load failed",
 			"category", "read",
 			"err", err,
@@ -195,6 +201,7 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 			msg := fmt.Sprintf("update watermark: %v", err)
 			_ = r.repo.FinishRun(ctx, run, "failed", result.RowsRead, rowsWritten, current.Value, msg)
 			r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), result.RowsRead, rowsWritten, msg)
+			metrics.ObserveRun(load.Name, "failed", targetLabel, result.RowsRead, rowsWritten, run.StartedAt)
 			log.Error("update watermark", "category", "watermark", "err", err)
 			return fmt.Errorf("update watermark: %w", err)
 		}
@@ -214,9 +221,14 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 
 	if err := r.repo.FinishRun(ctx, run, "success", result.RowsRead, rowsWritten, newWMValue, ""); err != nil {
 		r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), result.RowsRead, rowsWritten, err.Error())
+		metrics.ObserveRun(load.Name, "failed", targetLabel, result.RowsRead, rowsWritten, run.StartedAt)
 		return err
 	}
 	r.state.MarkFinished(load.ID, "success", time.Now().UTC(), result.RowsRead, rowsWritten, "")
+	metrics.ObserveRun(load.Name, "success", targetLabel, result.RowsRead, rowsWritten, run.StartedAt)
+	if mode == contracts.LoadModeDelta && load.WatermarkType == string(contracts.WatermarkDatetime) {
+		metrics.ObserveWatermarkLag(load.Name, newWMValue, time.Now().UTC())
+	}
 	log.Info("load complete",
 		"category", "read",
 		"rows_read", result.RowsRead,

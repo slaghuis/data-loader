@@ -12,22 +12,12 @@ import (
 	"github.com/gopcua/opcua/ua"
 
 	"github.com/slaghuis/data-loader/internal/logging"
-	"github.com/slaghuis/data-loader/internal/metadata"
+	"github.com/slaghuis/data-loader/internal/metrics"
 	"github.com/slaghuis/data-loader/internal/sources"
 	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
 const kind = "opcua"
-
-// NodeRepository is the minimum contract this module needs from the metadata repo.
-type NodeRepository interface {
-	ListOPCUANodes(ctx context.Context, loadID int64) ([]metadata.OPCUANode, error)
-}
-
-var nodeRepo NodeRepository
-
-// SetNodeRepository is called once at startup from main.go.
-func SetNodeRepository(r NodeRepository) { nodeRepo = r }
 
 func init() {
 	sources.Register(kind, New)
@@ -94,11 +84,11 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 	start := time.Now().UTC()
 	result := contracts.ReadResult{StartedAt: start}
 
-	if nodeRepo == nil {
-		return result, fmt.Errorf("opcua node repository not configured")
+	if s.cfg.Telemetry == nil {
+		return result, fmt.Errorf("opcua telemetry catalog not configured")
 	}
 
-	nodes, err := nodeRepo.ListOPCUANodes(ctx, load.LoadID)
+	nodes, err := s.cfg.Telemetry.ListOPCUANodes(ctx, load.LoadID)
 	if err != nil {
 		return result, fmt.Errorf("load nodes: %w", err)
 	}
@@ -158,6 +148,7 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 				rows = append(rows, badRow(n, pollTS, err.Error()))
 				result.RowsRead++
 			}
+			metrics.ObserveBadQuality(load.Name, len(rows))
 			return emit(ctx, handler, contracts.Batch{Columns: columns, Rows: rows}, &result)
 		}
 	}
@@ -202,6 +193,14 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 		result.RowsRead++
 	}
 
+	bad := 0
+	for _, row := range rows {
+		if q, _ := row["quality"].(string); q == "bad" {
+			bad++
+		}
+	}
+	metrics.ObserveBadQuality(load.Name, bad)
+
 	return emit(ctx, handler, contracts.Batch{Columns: columns, Rows: rows}, &result)
 }
 
@@ -215,7 +214,7 @@ func emit(ctx context.Context, handler contracts.BatchHandler, batch contracts.B
 	return *result, nil
 }
 
-func badRow(n metadata.OPCUANode, ts time.Time, msg string) contracts.Row {
+func badRow(n contracts.OPCUAPoint, ts time.Time, msg string) contracts.Row {
 	return contracts.Row{
 		"tag_name":   n.TagName,
 		"node_id":    n.NodeID,

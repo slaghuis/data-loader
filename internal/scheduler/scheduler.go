@@ -9,6 +9,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/slaghuis/data-loader/internal/metadata"
+	"github.com/slaghuis/data-loader/internal/metrics"
 	"github.com/slaghuis/data-loader/internal/pipeline"
 	"github.com/slaghuis/data-loader/internal/runstate"
 )
@@ -189,11 +190,13 @@ func (s *Scheduler) trigger(loadID int64) {
 		return
 	}
 	if s.running[loadID] {
+		name := entry.load.Name
 		s.mu.Unlock()
+		metrics.ObserveOverlapSkip(name)
 		s.logger.Warn("skipping overlapping run",
 			"category", "schedule",
 			"load_id", loadID,
-			"load_name", entry.load.Name,
+			"load_name", name,
 		)
 		return
 	}

@@ -40,6 +40,5 @@ Positive:
 
 Negative:
 
-- String formatting must be lossless. D-03 shows the SQL Server numeric path currently is not. Phase 2 stores the database's own textual representation.
+- String formatting must be lossless. Phase 2 stores the database's own textual representation for numeric watermarks (D-03 / D-18).
 - Watermarks miss rows whose watermark value is lower than one already loaded (late-arriving commits). Delivery is at-least-once, with possible duplicates after a crash.
-- PostgreSQL does not use the upper-bound snapshot yet (D-18).
