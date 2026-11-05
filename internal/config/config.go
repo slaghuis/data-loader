@@ -30,6 +30,9 @@ type AppConfig struct {
 	ReloadEnabled     bool
 	ReloadIntervalSec int // 0 = disabled, periodic reload off
 	ReloadOnSIGHUP    bool
+
+	// Shutdown
+	ShutdownTimeoutSec int
 }
 
 func FromEnv() (*AppConfig, error) {
@@ -51,6 +54,8 @@ func FromEnv() (*AppConfig, error) {
 		ReloadEnabled:     getEnvBool("LOADER_RELOAD_ENABLED", true),
 		ReloadIntervalSec: getEnvInt("LOADER_RELOAD_INTERVAL_SEC", 60),
 		ReloadOnSIGHUP:    getEnvBool("LOADER_RELOAD_ON_SIGHUP", true),
+
+		ShutdownTimeoutSec: getEnvInt("LOADER_SHUTDOWN_TIMEOUT_SEC", 60),
 	}
 	if c.MetadataDSN == "" {
 		return nil, fmt.Errorf("LOADER_METADATA_DSN is required")

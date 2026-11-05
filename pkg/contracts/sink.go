@@ -16,6 +16,9 @@ type Sink interface {
 	Open(ctx context.Context) error
 	Ping(ctx context.Context) error
 
+	// TableExists reports whether the target table is already present.
+	TableExists(ctx context.Context, target TargetTable) (bool, error)
+
 	// EnsureTable creates the target table if it does not exist,
 	// based on the columns of the first batch. Always appends a
 	// [load_timestamp] datetime2 column.

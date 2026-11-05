@@ -3,6 +3,7 @@ module github.com/slaghuis/data-loader
 go 1.26.9
 
 require (
+	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/gopcua/opcua v0.9.1
 	github.com/jackc/pgx/v5 v5.11.0

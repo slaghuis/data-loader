@@ -86,7 +86,8 @@ func main() {
 
 	// Pipeline & Scheduler
 	runner := pipeline.NewRunner(repo, sk, state, appLogger)
-	sch := scheduler.New(repo, runner, state, appLogger)
+	sch := scheduler.New(repo, runner, state, appLogger,
+		time.Duration(cfg.ShutdownTimeoutSec)*time.Second)
 	if err := sch.Load(ctx); err != nil {
 		appLogger.Error("load schedules", "err", err)
 		os.Exit(1)

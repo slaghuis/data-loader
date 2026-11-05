@@ -2,8 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -16,22 +14,33 @@ import (
 	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
+// Runner executes a single load against a Source and Sink.
 type Runner struct {
-	repo   *metadata.Repository
-	sink   contracts.Sink
-	state  *runstate.Registry
-	logger *slog.Logger
+	repo    RunStore
+	sink    contracts.Sink
+	state   *runstate.Registry
+	logger  *slog.Logger
+	buildFn SourceBuilder
 }
 
-func NewRunner(repo *metadata.Repository, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger) *Runner {
+// NewRunner wires the production source registry as the SourceBuilder.
+func NewRunner(repo RunStore, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger) *Runner {
+	return NewRunnerWithBuilder(repo, sink, state, logger, sources.Build)
+}
+
+// NewRunnerWithBuilder allows tests to inject a SourceBuilder.
+func NewRunnerWithBuilder(repo RunStore, sink contracts.Sink, state *runstate.Registry, logger *slog.Logger, build SourceBuilder) *Runner {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Runner{repo: repo, sink: sink, state: state, logger: logger}
+	if build == nil {
+		build = sources.Build
+	}
+	return &Runner{repo: repo, sink: sink, state: state, logger: logger, buildFn: build}
 }
 
+// Execute runs one load end-to-end.
 func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
-	// A logger scoped to this load. run_uuid gets added once the run starts.
 	log := r.logger.With(
 		"load_id", load.ID,
 		"source_id", load.SourceID,
@@ -40,7 +49,6 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 	)
 	ctx = logging.WithContext(ctx, log)
 
-	// Normalize loads for point-based sources.
 	if load.Source.Kind == "modbus" || load.Source.Kind == "opcua" {
 		if load.Mode != string(contracts.LoadModeAppend) {
 			log.Warn("forcing append mode for point-based source",
@@ -51,13 +59,12 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 		load.WatermarkType = string(contracts.WatermarkNone)
 	}
 
-	// 1. Build source config.
 	params, err := config.ResolveParams(load.Source.ParamsJSON)
 	if err != nil {
 		log.Error("resolve params", "category", "connect", "err", err)
 		return err
 	}
-	src, err := sources.Build(contracts.SourceConfig{
+	src, err := r.buildFn(contracts.SourceConfig{
 		SourceID:   load.SourceID,
 		SourceType: load.Source.Kind,
 		Name:       load.Source.Name,
@@ -79,9 +86,8 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 	}
 	log.Debug("source opened", "category", "connect")
 
-	// 2. Current watermark.
 	wm, err := r.repo.GetWatermark(ctx, load.ID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err != nil {
 		log.Error("read watermark", "category", "watermark", "err", err)
 		return err
 	}
@@ -90,7 +96,6 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 		current.Value = wm.Value
 	}
 
-	// 3. Start a run.
 	run, err := r.repo.StartRun(ctx, load.ID, current.Value)
 	if err != nil {
 		log.Error("start run", "category", "read", "err", err)
@@ -105,10 +110,29 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 	)
 	r.state.MarkRunning(load.ID, run.RunUUID, run.StartedAt)
 
-	// 4. Prepare handler.
 	target := contracts.TargetTable{Schema: load.TargetSchema, Name: load.TargetTable}
 	mode := contracts.LoadMode(load.Mode)
 	loadTS := time.Now().UTC()
+
+	// D-05: for replace, truncate before reading so a zero-row source still
+	// clears stale data. Atomic staging (ADR-020) is deferred.
+	if mode == contracts.LoadModeReplace {
+		exists, err := r.sink.TableExists(ctx, target)
+		if err != nil {
+			_ = r.repo.FinishRun(ctx, run, "failed", 0, 0, current.Value, err.Error())
+			r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), 0, 0, err.Error())
+			return err
+		}
+		if exists {
+			if err := r.sink.Truncate(ctx, target); err != nil {
+				_ = r.repo.FinishRun(ctx, run, "failed", 0, 0, current.Value, err.Error())
+				r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), 0, 0, err.Error())
+				log.Error("truncate target", "category", "write", "err", err)
+				return fmt.Errorf("truncate target: %w", err)
+			}
+			log.Info("target truncated", "category", "write")
+		}
+	}
 
 	var rowsWritten int64
 	firstBatch := true
@@ -123,12 +147,6 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 					"category", "write",
 					"target", fmt.Sprintf("%s.%s", target.Schema, target.Name),
 				)
-			}
-			if mode == contracts.LoadModeReplace {
-				if err := r.sink.Truncate(ctx, target); err != nil {
-					return fmt.Errorf("truncate target: %w", err)
-				}
-				log.Info("target truncated", "category", "write")
 			}
 			firstBatch = false
 		}
@@ -145,7 +163,6 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 		return nil
 	}
 
-	// 5. Read.
 	loadCfg := contracts.LoadConfig{
 		LoadID:          load.ID,
 		Name:            load.Name,
@@ -158,8 +175,6 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 	}
 	result, err := src.Read(ctx, loadCfg, handler)
 	if err != nil {
-
-		// Failure path
 		_ = r.repo.FinishRun(ctx, run, "failed", result.RowsRead, rowsWritten, current.Value, err.Error())
 		r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), result.RowsRead, rowsWritten, err.Error())
 		log.Error("load failed",
@@ -171,31 +186,32 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 		return err
 	}
 
-	// 6. Watermark.
 	newWMValue := result.NewWatermark.Value
 	if mode == contracts.LoadModeDelta && newWMValue != "" &&
 		(result.WatermarkInit || newWMValue != current.Value) {
 
 		if err := r.repo.UpsertWatermark(ctx, load.ID, newWMValue); err != nil {
-			log.Warn("update watermark", "category", "watermark", "err", err)
+			// D-04: a failed watermark upsert must fail the run to avoid duplicates.
+			msg := fmt.Sprintf("update watermark: %v", err)
+			_ = r.repo.FinishRun(ctx, run, "failed", result.RowsRead, rowsWritten, current.Value, msg)
+			r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), result.RowsRead, rowsWritten, msg)
+			log.Error("update watermark", "category", "watermark", "err", err)
+			return fmt.Errorf("update watermark: %w", err)
+		}
+		if result.WatermarkInit {
+			log.Info("watermark initialized (first run, no rows loaded)",
+				"category", "watermark",
+				"watermark_to", newWMValue,
+			)
 		} else {
-			if result.WatermarkInit {
-				log.Info("watermark initialized (first run, no rows loaded)",
-					"category", "watermark",
-					"watermark_to", newWMValue,
-				)
-			} else {
-				log.Info("watermark advanced",
-					"category", "watermark",
-					"watermark_from", current.Value,
-					"watermark_to", newWMValue,
-				)
-			}
+			log.Info("watermark advanced",
+				"category", "watermark",
+				"watermark_from", current.Value,
+				"watermark_to", newWMValue,
+			)
 		}
 	}
 
-	// 7. Finish.
-	// Success path
 	if err := r.repo.FinishRun(ctx, run, "success", result.RowsRead, rowsWritten, newWMValue, ""); err != nil {
 		r.state.MarkFinished(load.ID, "failed", time.Now().UTC(), result.RowsRead, rowsWritten, err.Error())
 		return err

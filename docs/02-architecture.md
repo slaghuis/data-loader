@@ -194,6 +194,9 @@ sequenceDiagram
     R->>S: Open(ctx)
     R->>M: GetWatermark(load)
     R->>M: StartRun → run_uuid (status=running)
+    opt mode=replace and table exists
+        R->>K: Truncate (before Read; D-05)
+    end
     alt no stored watermark (first run)
         R->>S: Read()
         S->>S: SELECT MAX(wm)
@@ -206,13 +209,12 @@ sequenceDiagram
             S->>R: handler(batch)
             opt first batch
                 R->>K: EnsureTable (if auto_create_table)
-                R->>K: Truncate (if mode=replace)
             end
             R->>K: WriteBatch(rows, yb_load_timestamp)
         end
         S-->>R: RowsRead, NewWatermark=upper
     end
-    R->>M: UpsertWatermark (delta only, previous_value kept)
+    R->>M: UpsertWatermark (delta only; failure fails the run — D-04)
     R->>M: FinishRun(success|failed, rows, wm_end, error)
     R->>S: Close()
 ```
@@ -439,7 +441,7 @@ id, name, kind, description, params_json, is_enabled, created_at, updated_at, de
 | is_enabled | bit, default 1 | Intended to stop all loads on the source — **not enforced today** (see note) |
 | deleted_at | datetime2 null | GORM soft delete |
 
-> Note: `ListEnabledLoads` filters on `meta_loads.is_enabled` only. A disabled **source** does not stop its loads. Phase 2 fixes this (D-19).
+> `ListEnabledLoads` joins `meta_sources` and requires both the load and the source to be enabled (D-19 closed).
 
 ## Load
 
@@ -1041,9 +1043,9 @@ The watermark is upserted only after all batches are written without error. *(De
 
 Loads on `modbus`/`opcua` sources are forced to `append` with no watermark, regardless of configuration (warning logged).
 
-## Rule 4 — Replace truncates before the first write
+## Rule 4 — Replace truncates before the read
 
-`replace` truncates the target immediately before the first batch. *(Defect D-05: zero-row results skip truncation.)*
+`replace` truncates the target **before** `Source.Read` when the table already exists, so a zero-row source clears stale data (D-05 truncate timing). Truncate+insert are still not atomic; staging/`sp_rename` waits on ADR-020.
 
 ## Rule 5 — No overlapping runs of the same load
 
@@ -1187,7 +1189,7 @@ opcua_nodes: [ { load: mill.telemetry, tag_name: mill_speed, node_id: "ns=2;s=Mi
 | Authentication / authorisation failure | log (api) | 3 |
 | Target delivery lagging / recovered | `meta_target_runs` + log | 4 |
 
-> **D-01:** today `load_id`, `run_uuid`, `source_id` attached via `logger.With` are not persisted; fixing this is a Phase 2 exit criterion because the audit trail depends on it.
+> **D-01 closed:** `logging.DBHandler` accumulates `With` / `WithGroup` attributes and promotes `load_id`, `run_uuid`, `source_id`, and `category` into `meta_log_entries` columns. Logging after `Close` no longer panics (D-02).
 
 ---
 

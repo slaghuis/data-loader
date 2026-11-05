@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	_ "github.com/microsoft/go-mssqldb"
 
 	"github.com/slaghuis/data-loader/internal/sources"
+	"github.com/slaghuis/data-loader/internal/sqlident"
 	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
@@ -35,7 +37,10 @@ func New(cfg contracts.SourceConfig) (contracts.Source, error) {
 func (s *Source) Kind() string { return Kind }
 
 func (s *Source) Open(ctx context.Context) error {
-	dsn := buildDSN(s.cfg.Params)
+	dsn, err := buildDSN(s.cfg.Params)
+	if err != nil {
+		return err
+	}
 	db, err := sql.Open("sqlserver", dsn)
 	if err != nil {
 		return fmt.Errorf("open sqlserver source: %w", err)
@@ -70,8 +75,11 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 		load.WatermarkType != contracts.WatermarkNone &&
 		load.LastWatermark.Value == "" {
 
-		upper, err := s.currentMaxWatermark(ctx, sanitizeObject(load.ObjectName),
-			load.WatermarkColumn, load.WatermarkType)
+		obj, err := quoteObject(load.ObjectName)
+		if err != nil {
+			return result, err
+		}
+		upper, err := s.currentMaxWatermark(ctx, obj, load.WatermarkColumn, load.WatermarkType)
 		if err != nil {
 			return result, fmt.Errorf("initialize watermark: %w", err)
 		}
@@ -158,7 +166,10 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 // Correctness pattern: we snapshot "now" (or MAX(wm)) BEFORE reading, so any
 // rows inserted mid-load with a higher watermark are picked up on the next run.
 func (s *Source) buildQuery(ctx context.Context, load contracts.LoadConfig) (string, []any, contracts.Watermark, error) {
-	obj := sanitizeObject(load.ObjectName)
+	obj, err := quoteObject(load.ObjectName)
+	if err != nil {
+		return "", nil, contracts.Watermark{}, err
+	}
 
 	// Full-load modes: no watermark filtering.
 	if load.Mode == contracts.LoadModeAppend || load.Mode == contracts.LoadModeReplace {
@@ -170,6 +181,10 @@ func (s *Source) buildQuery(ctx context.Context, load contracts.LoadConfig) (str
 	if load.WatermarkColumn == "" || load.WatermarkType == contracts.WatermarkNone {
 		return "", nil, contracts.Watermark{}, fmt.Errorf("delta load requires watermark column and type")
 	}
+	if err := sqlident.Validate(load.WatermarkColumn); err != nil {
+		return "", nil, contracts.Watermark{}, fmt.Errorf("watermark column: %w", err)
+	}
+	wmCol := sqlident.QuoteMSSQL(load.WatermarkColumn)
 
 	// Determine upper bound BEFORE reading data.
 	upper, err := s.currentMaxWatermark(ctx, obj, load.WatermarkColumn, load.WatermarkType)
@@ -185,8 +200,8 @@ func (s *Source) buildQuery(ctx context.Context, load contracts.LoadConfig) (str
 	}
 
 	q := fmt.Sprintf(
-		"SELECT * FROM %s WHERE [%s] > @p1 AND [%s] <= @p2 ORDER BY [%s]",
-		obj, load.WatermarkColumn, load.WatermarkColumn, load.WatermarkColumn,
+		"SELECT * FROM %s WHERE %s > @p1 AND %s <= @p2 ORDER BY %s",
+		obj, wmCol, wmCol, wmCol,
 	)
 	return q, []any{load.LastWatermark.Value, upper.Value}, upper, nil
 }
@@ -206,15 +221,18 @@ func IsFirstRunInit(err error) (contracts.Watermark, bool) {
 }
 
 // currentMaxWatermark returns MAX(watermark_column) as a string.
+// Numeric values are cast in SQL and scanned as strings so values ≥ 1e6 and
+// integers above 2^53 keep a stable decimal representation (D-03).
 func (s *Source) currentMaxWatermark(ctx context.Context, obj, col string, wmType contracts.WatermarkType) (contracts.Watermark, error) {
-	q := fmt.Sprintf("SELECT MAX([%s]) FROM %s", col, obj)
-	var raw sql.NullString
-	// Use a permissive scan target so numeric and datetime values both work via cast.
-	var t sql.NullTime
-	var f sql.NullFloat64
+	if err := sqlident.Validate(col); err != nil {
+		return contracts.Watermark{}, fmt.Errorf("watermark column: %w", err)
+	}
+	quoted := sqlident.QuoteMSSQL(col)
 
 	switch wmType {
 	case contracts.WatermarkDatetime:
+		q := fmt.Sprintf("SELECT MAX(%s) FROM %s", quoted, obj)
+		var t sql.NullTime
 		if err := s.db.QueryRowContext(ctx, q).Scan(&t); err != nil {
 			return contracts.Watermark{}, err
 		}
@@ -223,14 +241,18 @@ func (s *Source) currentMaxWatermark(ctx context.Context, obj, col string, wmTyp
 		}
 		return contracts.Watermark{Type: wmType, Value: t.Time.UTC().Format(time.RFC3339Nano)}, nil
 	case contracts.WatermarkNumeric:
-		if err := s.db.QueryRowContext(ctx, q).Scan(&f); err != nil {
+		q := fmt.Sprintf("SELECT CONVERT(varchar(40), MAX(%s)) FROM %s", quoted, obj)
+		var raw sql.NullString
+		if err := s.db.QueryRowContext(ctx, q).Scan(&raw); err != nil {
 			return contracts.Watermark{}, err
 		}
-		if !f.Valid {
+		if !raw.Valid {
 			return contracts.Watermark{Type: wmType, Value: ""}, nil
 		}
-		return contracts.Watermark{Type: wmType, Value: fmt.Sprintf("%v", f.Float64)}, nil
+		return contracts.Watermark{Type: wmType, Value: strings.TrimSpace(raw.String)}, nil
 	default:
+		q := fmt.Sprintf("SELECT CONVERT(varchar(400), MAX(%s)) FROM %s", quoted, obj)
+		var raw sql.NullString
 		if err := s.db.QueryRowContext(ctx, q).Scan(&raw); err != nil {
 			return contracts.Watermark{}, err
 		}
@@ -240,32 +262,44 @@ func (s *Source) currentMaxWatermark(ctx context.Context, obj, col string, wmTyp
 
 // ---------- helpers ----------
 
-func buildDSN(p map[string]string) string {
+// buildDSN constructs a sqlserver:// URL with proper escaping (D-08).
+func buildDSN(p map[string]string) (string, error) {
 	server := p["server"]
+	database := p["database"]
+	if server == "" || database == "" {
+		return "", fmt.Errorf("sqlserver source requires 'server' and 'database' params")
+	}
 	port := p["port"]
 	if port == "" {
 		port = "1433"
 	}
-	dsn := fmt.Sprintf("sqlserver://%s:%s@%s:%s?database=%s",
-		p["user"], p["password"], server, port, p["database"])
-	if v, ok := p["encrypt"]; ok {
-		dsn += "&encrypt=" + v
+	u := &url.URL{
+		Scheme: "sqlserver",
+		Host:   server + ":" + port,
 	}
-	if v, ok := p["trustservercertificate"]; ok {
-		dsn += "&TrustServerCertificate=" + v
+	user := p["user"]
+	password := p["password"]
+	if user != "" {
+		if password != "" {
+			u.User = url.UserPassword(user, password)
+		} else {
+			u.User = url.User(user)
+		}
 	}
-	return dsn
+	q := u.Query()
+	q.Set("database", database)
+	if v, ok := p["encrypt"]; ok && v != "" {
+		q.Set("encrypt", v)
+	}
+	if v, ok := p["trustservercertificate"]; ok && v != "" {
+		q.Set("TrustServerCertificate", v)
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
-// sanitizeObject accepts "schema.table" or "table" and returns a bracketed
-// identifier. It rejects anything with suspicious characters.
-func sanitizeObject(name string) string {
-	parts := strings.Split(name, ".")
-	for i, p := range parts {
-		p = strings.Trim(p, "[]")
-		parts[i] = "[" + p + "]"
-	}
-	return strings.Join(parts, ".")
+func quoteObject(name string) (string, error) {
+	return sqlident.QuoteMSSQLQualified(name)
 }
 
 // canonicalType maps SQL Server type names to our canonical set.
