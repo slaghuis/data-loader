@@ -17,11 +17,11 @@ import (
 )
 
 type fakeRepo struct {
-	mu            sync.Mutex
-	abortCalls    []string
-	abortCount    int64
-	loads         []metadata.Load
-	fingerprint   string
+	mu          sync.Mutex
+	abortCalls  []string
+	abortCount  int64
+	loads       []metadata.Load
+	fingerprint string
 }
 
 func (f *fakeRepo) AbortRunningRuns(_ context.Context, reason string) (int64, error) {

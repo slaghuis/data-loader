@@ -47,22 +47,22 @@ func (f *FakeSource) Read(ctx context.Context, load contracts.LoadConfig, handle
 type FakeSink struct {
 	mu sync.Mutex
 
-	Exists       bool
-	ExistsErr    error
-	EnsureErr    error
-	TruncateErr  error
-	WriteErr     error
-	EnsureCalls  int
+	Exists        bool
+	ExistsErr     error
+	EnsureErr     error
+	TruncateErr   error
+	WriteErr      error
+	EnsureCalls   int
 	TruncateCalls int
-	WriteCalls   int
-	RowsWritten  int64
-	LastTarget   contracts.TargetTable
-	Truncated    bool
+	WriteCalls    int
+	RowsWritten   int64
+	LastTarget    contracts.TargetTable
+	Truncated     bool
 }
 
-func (s *FakeSink) Open(context.Context) error  { return nil }
-func (s *FakeSink) Ping(context.Context) error  { return nil }
-func (s *FakeSink) Close() error                { return nil }
+func (s *FakeSink) Open(context.Context) error { return nil }
+func (s *FakeSink) Ping(context.Context) error { return nil }
+func (s *FakeSink) Close() error               { return nil }
 
 func (s *FakeSink) TableExists(context.Context, contracts.TargetTable) (bool, error) {
 	return s.Exists, s.ExistsErr
@@ -102,15 +102,15 @@ func (s *FakeSink) WriteBatch(_ context.Context, _ contracts.TargetTable, batch 
 type FakeRunStore struct {
 	mu sync.Mutex
 
-	Watermark       *metadata.Watermark
-	GetWMErr        error
-	UpsertErr       error
-	StartErr        error
-	FinishErr       error
-	Runs            []*metadata.LoadRun
-	FinishedStatus  []string
-	UpsertCalls     int
-	UpsertValues    []string
+	Watermark      *metadata.Watermark
+	GetWMErr       error
+	UpsertErr      error
+	StartErr       error
+	FinishErr      error
+	Runs           []*metadata.LoadRun
+	FinishedStatus []string
+	UpsertCalls    int
+	UpsertValues   []string
 }
 
 func (s *FakeRunStore) GetWatermark(context.Context, int64) (*metadata.Watermark, error) {
