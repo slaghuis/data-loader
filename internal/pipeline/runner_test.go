@@ -20,15 +20,15 @@ func testLogger() *slog.Logger {
 
 func sampleLoad(mode string) metadata.Load {
 	return metadata.Load{
-		ID:           1,
-		SourceID:     2,
-		Name:         "orders",
-		ObjectName:   "dbo.Orders",
-		TargetSchema: "dbo",
-		TargetTable:  "stg_orders",
-		Mode:         mode,
-		WatermarkType: string(contracts.WatermarkNone),
-		BatchSize:    100,
+		ID:              1,
+		SourceID:        2,
+		Name:            "orders",
+		ObjectName:      "dbo.Orders",
+		TargetSchema:    "dbo",
+		TargetTable:     "stg_orders",
+		Mode:            mode,
+		WatermarkType:   string(contracts.WatermarkNone),
+		BatchSize:       100,
 		AutoCreateTable: true,
 		Source: metadata.Source{
 			ID:         2,

@@ -286,7 +286,8 @@ data-loader/
 │   ├── health/                 # /healthz /readyz /status (+ /metrics in P2)
 │   ├── housekeeping/           # retention pruning on cron
 │   ├── logging/                # slog factory, context helpers, DB mirror handler
-│   ├── metadata/               # GORM models, repository, AutoMigrate, fingerprint
+│   ├── metadata/               # GORM models, repository, fingerprint
+│   ├── migrate/                # goose runner (up/down/status, baseline stamp)
 │   ├── pipeline/               # Runner: one load execution
 │   ├── reload/                 # SIGHUP + periodic reload coordinator
 │   ├── runstate/               # in-memory last-run registry for /status
@@ -303,7 +304,7 @@ data-loader/
 │   ├── secrets/                # (P3) secret store per ADR-016
 │   └── delivery/               # (P4) multi-target orchestration + forwarder
 ├── pkg/contracts/              # domain ports: Source, Sink, types
-├── migrations/                 # (P2) versioned SQL migrations (ADR-012)
+├── migrations/                 # versioned SQL migrations (ADR-012)
 ├── deploy/                     # (P2) systemd unit, k8s manifests referenced by pipeline.yaml
 ├── test/integration/           # (P2) testcontainers-based integration suites
 ├── seeds/                      # example seed files
@@ -321,7 +322,7 @@ data-loader/
 
 ## Metadata database (as built)
 
-Created by `metadata.AutoMigrate` (GORM) at startup. Phase 2 moves to versioned migrations (ADR-012).
+Created by versioned goose migrations (`loader migrate up`, ADR-012). Baseline `00001` matches the former AutoMigrate schema; `00002` adds foreign keys and `meta_load_runs(status, started_at)`.
 
 ```mermaid
 erDiagram
@@ -1259,7 +1260,7 @@ Validate:
 - PostgreSQL → MSSQL sink: NUMERIC, UUID, JSONB, TIMESTAMPTZ, BOOLEAN mapping; delta with `search_path`.
 - Modbus: in-process server from `simonvetter/modbus` (it ships a server) — coils, holding float32/float64 with word orders; server stop → bad rows → recovery.
 - OPC UA: simulation server container (or gopcua test server) — batch read, invalid node id → bad row, server restart.
-- Metadata: `AutoMigrate`/migrations up and down, fingerprint stability, batched prune.
+- Metadata: goose migrations up and down (ADR-012), fingerprint stability, batched prune.
 - *(P3)* API contract tests against `openapi.yaml`; discovery and preview against SQL Server and PostgreSQL containers.
 - *(P4)* Fabric sink against Azurite (ADLS Gen2 API emulation) for file layout; nightly test against a real Fabric test workspace.
 
@@ -1340,7 +1341,7 @@ WantedBy=multi-user.target
 | Architecture design | ✅ this document | — |
 | Mermaid diagrams | ✅ this document | updated per phase |
 | Folder structure | ✅ | P3/P4 additions above |
-| Database schema | ✅ GORM AutoMigrate | P2 versioned migrations |
+| Database schema | ✅ goose migrations (ADR-012) | P3+ expand/contract migrations |
 | Source code | ✅ | P3 API, P4 sinks |
 | Unit tests | ❌ none | P2 (≥ 80 %) |
 | Integration tests | ❌ none | P2 |

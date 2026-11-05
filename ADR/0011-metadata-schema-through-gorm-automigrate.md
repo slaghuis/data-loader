@@ -1,15 +1,16 @@
 ---
 id: ADR-011
 title: "Metadata schema through GORM AutoMigrate"
-status: Accepted
+status: Superseded
 date: 2026-09-16
+superseded_by: ADR-012
 tags: [storage, migrations]
 ---
 # ADR-011: Metadata schema through GORM AutoMigrate
 
 ## Status
 
-Accepted. To be superseded by ADR-012 once that is accepted.
+Superseded by [ADR-012](0012-versioned-migrations-with-goose.md) (accepted 2026-11-05).
 
 ## Date
 

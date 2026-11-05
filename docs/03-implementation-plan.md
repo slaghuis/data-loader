@@ -129,10 +129,10 @@ Status key: ✅ closed · 🟡 partial · ⬜ open.
 
 ### 2.5 Versioned migrations
 
-- [ ] Adopt `pressly/goose` v3 with embedded SQL migrations in `migrations/` (ADR-012) — **deferred; ADR-012 remains Proposed; AutoMigrate stays for this slice.**
-- [ ] Baseline migration `0001` equals the current AutoMigrate schema (generated, then hand-reviewed). Detect existing databases and mark them as baselined.
-- [ ] Add explicit foreign keys and an index on `meta_load_runs(status, started_at)`.
-- [ ] Remove `AutoMigrate` from the startup path. `loader migrate up|status` becomes an explicit step.
+- [x] Adopt `pressly/goose` v3 with embedded SQL migrations in `migrations/` ([ADR-012](../ADR/0012-versioned-migrations-with-goose.md) Accepted 2026-11-05).
+- [x] Baseline migration `00001` equals the current AutoMigrate schema (idempotent T-SQL). Existing databases with `meta_sources` and goose version 0 are stamped via `ApplyVersion(1)`.
+- [x] Add explicit foreign keys and an index on `meta_load_runs(status, started_at)` (`00002`).
+- [x] Remove `AutoMigrate` from the startup path. `loader migrate up|down|status` is an explicit step.
 
 ### 2.6 Observability
 

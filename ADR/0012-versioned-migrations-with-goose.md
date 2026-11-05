@@ -1,8 +1,9 @@
 ---
 id: ADR-012
 title: "Versioned migrations with goose"
-status: Proposed
+status: Accepted
 date: 2026-10-14
+accepted: 2026-11-05
 supersedes: ADR-011
 tags: [storage, migrations]
 ---
@@ -10,11 +11,11 @@ tags: [storage, migrations]
 
 ## Status
 
-Proposed
+Accepted (2026-11-05). Supersedes ADR-011.
 
 ## Date
 
-2026-10-14
+2026-10-14 (accepted 2026-11-05)
 
 ## Context
 

@@ -3,12 +3,12 @@
 | Item | Value |
 |------|-------|
 | Document | 05 – Architectural Decision Records (index) |
-| Last updated | 2026-10-14 |
+| Last updated | 2026-11-05 |
 | Related | [01 Requirements](01-project-requirements.md) · [02 Architecture](02-architecture.md) · [03 Implementation Plan](03-implementation-plan.md) · [04 AI Rules](04-ai-rules.md) |
 
 Each decision lives in its own file under [`ADR/`](../ADR/) so the design indexer and the ADR server (`find_decision`, `list_adrs`, `get_adr`) can index it individually. This page is only the index.
 
-The Phase 1 decisions were made while the loader was being built (from 2026-09-16) and are recorded retroactively (2026-10-14). The Phase 2–4 decisions are **Proposed** and need review before implementation (see [04 AI Rules](04-ai-rules.md#workflow-for-ai-agents)).
+The Phase 1 decisions were made while the loader was being built (from 2026-09-16) and are recorded retroactively (2026-10-14). ADR-012 (versioned migrations) was **Accepted** on 2026-11-05 and supersedes ADR-011. Remaining Phase 3–4 decisions are still **Proposed** and need review before implementation (see [04 AI Rules](04-ai-rules.md#workflow-for-ai-agents)).
 
 ## Index
 
@@ -24,8 +24,8 @@ The Phase 1 decisions were made while the loader was being built (from 2026-09-1
 | [ADR-008](../ADR/0008-structured-logging-with-slog-mirrored-asynchronously-to-the.md) | Structured logging with slog, mirrored asynchronously to the database | Accepted | 1 |
 | [ADR-009](../ADR/0009-hot-reload-by-fingerprint-polling-plus-sighup.md) | Hot reload by fingerprint polling plus SIGHUP | Accepted | 1 |
 | [ADR-010](../ADR/0010-secrets-as-env-references.md) | Secrets as `$env:` references | Accepted (extended by ADR-016) | 1 |
-| [ADR-011](../ADR/0011-metadata-schema-through-gorm-automigrate.md) | Metadata schema through GORM AutoMigrate | Accepted (to be superseded by ADR-012) | 1 |
-| [ADR-012](../ADR/0012-versioned-migrations-with-goose.md) | Versioned migrations with goose | Proposed | 2 |
+| [ADR-011](../ADR/0011-metadata-schema-through-gorm-automigrate.md) | Metadata schema through GORM AutoMigrate | Superseded by ADR-012 | 1 |
+| [ADR-012](../ADR/0012-versioned-migrations-with-goose.md) | Versioned migrations with goose | Accepted | 2 |
 | [ADR-013](../ADR/0013-management-api-rest-json-openapi-first-standard-library-rout.md) | Management API: REST/JSON, OpenAPI-first, standard-library router, embedded in the loader | Proposed | 3 |
 | [ADR-014](../ADR/0014-api-authentication-entra-id-jwt-with-scopes-optional-mtls.md) | API authentication: Entra ID JWT with scopes, optional mTLS | Proposed | 3 |
 | [ADR-015](../ADR/0015-connectivity-model-between-the-configuration-app-and-the-edg.md) | Connectivity model between the configuration app and the edge loader | Proposed — **decision required** | 3 |

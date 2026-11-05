@@ -29,10 +29,17 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		os.Exit(runMigrate(os.Args[2:]))
+	}
+	os.Exit(runServer())
+}
+
+func runServer() int {
 	cfg, err := config.FromEnv()
 	if err != nil {
 		slog.Error("config load failed", "err", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Bootstrap a console-only logger first so we can log startup issues
@@ -40,15 +47,11 @@ func main() {
 	bootLogger := logging.New(cfg.LogLevel, cfg.LogFormat)
 	slog.SetDefault(bootLogger)
 
-	// Metadata DB
+	// Metadata DB — schema is managed by `loader migrate up` (ADR-012), not AutoMigrate.
 	gdb, err := gorm.Open(sqlserver.Open(cfg.MetadataDSN), &gorm.Config{})
 	if err != nil {
 		slog.Error("open metadata db", "err", err)
-		os.Exit(1)
-	}
-	if err := metadata.AutoMigrate(gdb); err != nil {
-		slog.Error("migrate metadata", "err", err)
-		os.Exit(1)
+		return 1
 	}
 	repo := metadata.NewRepository(gdb)
 
@@ -73,7 +76,7 @@ func main() {
 	sk := sink.NewMSSQLSink(cfg.SinkDSN)
 	if err := sk.Open(ctx); err != nil {
 		appLogger.Error("open sink", "err", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() {
 		if err := sk.Close(); err != nil {
@@ -90,7 +93,7 @@ func main() {
 		time.Duration(cfg.ShutdownTimeoutSec)*time.Second)
 	if err := sch.Load(ctx); err != nil {
 		appLogger.Error("load schedules", "err", err)
-		os.Exit(1)
+		return 1
 	}
 	sch.Start()
 	appLogger.Info("data-loader started")
@@ -101,7 +104,7 @@ func main() {
 		hs = health.New(cfg.HealthAddr, state, gdb, sk.DB(), "dev", appLogger)
 		if err := hs.Start(); err != nil {
 			appLogger.Error("start health server", "err", err)
-			os.Exit(1)
+			return 1
 		}
 	}
 
@@ -128,7 +131,7 @@ func main() {
 
 		if err := hk.Start(); err != nil {
 			appLogger.Error("start housekeeping", "err", err)
-			os.Exit(1)
+			return 1
 		}
 	}
 
@@ -156,4 +159,5 @@ func main() {
 	}
 	dbHandler.Close(5 * time.Second)
 	appLogger.Info("data-loader stopped")
+	return 0
 }
