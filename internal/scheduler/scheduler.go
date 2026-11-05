@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/robfig/cron/v3"
 
@@ -17,41 +18,71 @@ type scheduledLoad struct {
 	entryID cron.EntryID
 }
 
-type Scheduler struct {
-	cron   *cron.Cron
-	repo   *metadata.Repository
-	runner *pipeline.Runner
-	state  *runstate.Registry
-	logger *slog.Logger
-
-	mu          sync.Mutex
-	scheduled   map[int64]*scheduledLoad // by load ID
-	running     map[int64]bool
-	fingerprint string
+// RunAborter marks orphaned or timed-out runs as aborted (D-09).
+type RunAborter interface {
+	AbortRunningRuns(ctx context.Context, reason string) (int64, error)
+	ListEnabledLoads(ctx context.Context) ([]metadata.Load, error)
+	MetadataFingerprint(ctx context.Context) (string, error)
 }
 
-func New(repo *metadata.Repository, runner *pipeline.Runner, state *runstate.Registry, logger *slog.Logger) *Scheduler {
+// Scheduler registers cron entries for enabled loads and runs them via Runner.
+type Scheduler struct {
+	cron            *cron.Cron
+	repo            RunAborter
+	runner          *pipeline.Runner
+	state           *runstate.Registry
+	logger          *slog.Logger
+	shutdownTimeout time.Duration
+
+	runCtx    context.Context
+	runCancel context.CancelFunc
+
+	mu          sync.Mutex
+	scheduled   map[int64]*scheduledLoad
+	running     map[int64]bool
+	fingerprint string
+	wg          sync.WaitGroup
+}
+
+// New builds a scheduler. shutdownTimeout bounds Stop's wait for in-flight runs.
+func New(repo RunAborter, runner *pipeline.Runner, state *runstate.Registry, logger *slog.Logger, shutdownTimeout time.Duration) *Scheduler {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if shutdownTimeout <= 0 {
+		shutdownTimeout = 60 * time.Second
+	}
+	runCtx, runCancel := context.WithCancel(context.Background())
 	return &Scheduler{
-		cron:      cron.New(),
-		repo:      repo,
-		runner:    runner,
-		state:     state,
-		logger:    logger,
-		scheduled: map[int64]*scheduledLoad{},
-		running:   map[int64]bool{},
+		cron:            cron.New(),
+		repo:            repo,
+		runner:          runner,
+		state:           state,
+		logger:          logger,
+		shutdownTimeout: shutdownTimeout,
+		runCtx:          runCtx,
+		runCancel:       runCancel,
+		scheduled:       map[int64]*scheduledLoad{},
+		running:         map[int64]bool{},
 	}
 }
 
-// Load registers all enabled loads at startup.
+// Load registers all enabled loads at startup and aborts orphaned running rows.
 func (s *Scheduler) Load(ctx context.Context) error {
+	n, err := s.repo.AbortRunningRuns(ctx, "aborted: orphaned running row at startup")
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		s.logger.Warn("aborted orphaned running load runs",
+			"category", "schedule",
+			"count", n,
+		)
+	}
 	return s.Reload(ctx)
 }
 
 // Reload synchronises cron entries with the current metadata state.
-// Safe to call at any time; a no-op if nothing has changed.
 func (s *Scheduler) Reload(ctx context.Context) error {
 	fp, err := s.repo.MetadataFingerprint(ctx)
 	if err != nil {
@@ -81,7 +112,6 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 
 	var added, removed, updated []int64
 
-	// 1. Remove entries no longer present or now disabled.
 	for id, existing := range s.scheduled {
 		if _, ok := desiredByID[id]; !ok {
 			s.cron.Remove(existing.entryID)
@@ -90,13 +120,9 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 		}
 	}
 
-	// 2. Add or update.
 	for id, ld := range desiredByID {
-		ld := ld // capture
+		ld := ld
 		if existing, ok := s.scheduled[id]; ok {
-			// Update in place if cron expression changed. Other fields (mode, watermark,
-			// object_name, target_*) take effect naturally on the next run because the
-			// runner re-reads the load each tick.
 			if existing.load.CronExpression != ld.CronExpression {
 				s.cron.Remove(existing.entryID)
 				entryID, err := s.cron.AddFunc(ld.CronExpression, func() { s.trigger(ld.ID) })
@@ -113,7 +139,6 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 				s.scheduled[id] = &scheduledLoad{load: ld, entryID: entryID}
 				updated = append(updated, id)
 			} else {
-				// Keep the entryID; refresh the cached load so trigger uses the latest.
 				existing.load = ld
 			}
 			continue
@@ -134,7 +159,6 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 		added = append(added, id)
 	}
 
-	// 3. Refresh the runstate registry to match the current desired set.
 	for _, ld := range desired {
 		s.state.Register(runstate.LoadState{
 			LoadID:         ld.ID,
@@ -157,8 +181,6 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 	return nil
 }
 
-// trigger fires a load by ID; it looks up the *current* load to survive updates
-// that happen between scheduling and firing.
 func (s *Scheduler) trigger(loadID int64) {
 	s.mu.Lock()
 	entry, ok := s.scheduled[loadID]
@@ -179,16 +201,52 @@ func (s *Scheduler) trigger(loadID int64) {
 	load := entry.load
 	s.mu.Unlock()
 
+	s.wg.Add(1)
 	defer func() {
 		s.mu.Lock()
 		delete(s.running, loadID)
 		s.mu.Unlock()
+		s.wg.Done()
 	}()
 
-	if err := s.runner.Execute(context.Background(), load); err != nil {
-		_ = err // runner already logged
+	if err := s.runner.Execute(s.runCtx, load); err != nil {
+		_ = err
 	}
 }
 
+// Start begins the cron loop.
 func (s *Scheduler) Start() { s.cron.Start() }
-func (s *Scheduler) Stop()  { s.cron.Stop() }
+
+// Stop cancels in-flight run contexts, waits up to shutdownTimeout, then aborts
+// any runs still marked running in metadata (D-09).
+func (s *Scheduler) Stop() {
+	_ = s.cron.Stop()
+	s.runCancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(s.shutdownTimeout):
+		s.logger.Warn("shutdown timeout waiting for in-flight runs",
+			"category", "schedule",
+			"timeout", s.shutdownTimeout.String(),
+		)
+	}
+
+	n, err := s.repo.AbortRunningRuns(context.Background(), "aborted: shutdown timeout")
+	if err != nil {
+		s.logger.Error("abort running runs on stop", "category", "schedule", "err", err)
+		return
+	}
+	if n > 0 {
+		s.logger.Warn("aborted running load runs after stop",
+			"category", "schedule",
+			"count", n,
+		)
+	}
+}

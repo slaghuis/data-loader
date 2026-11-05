@@ -12,6 +12,7 @@ import (
 	"time"
 
 	mssql "github.com/microsoft/go-mssqldb"
+	"github.com/slaghuis/data-loader/internal/sqlident"
 	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
@@ -52,9 +53,20 @@ func (s *MSSQLSink) Close() error {
 	return nil
 }
 
+// TableExists reports whether the sink already has the target table.
+func (s *MSSQLSink) TableExists(ctx context.Context, target contracts.TargetTable) (bool, error) {
+	if err := validateTarget(target); err != nil {
+		return false, err
+	}
+	return s.tableExists(ctx, target)
+}
+
 // EnsureTable creates the target table if it does not exist.
 // The yb_load_timestamp column is appended automatically.
 func (s *MSSQLSink) EnsureTable(ctx context.Context, target contracts.TargetTable, columns []contracts.Column) error {
+	if err := validateTarget(target); err != nil {
+		return err
+	}
 	exists, err := s.tableExists(ctx, target)
 	if err != nil {
 		return err
@@ -65,25 +77,42 @@ func (s *MSSQLSink) EnsureTable(ctx context.Context, target contracts.TargetTabl
 
 	var cols []string
 	for _, c := range columns {
-		cols = append(cols, fmt.Sprintf("[%s] %s %s",
-			c.Name,
+		if err := sqlident.Validate(c.Name); err != nil {
+			return fmt.Errorf("column name: %w", err)
+		}
+		cols = append(cols, fmt.Sprintf("%s %s %s",
+			sqlident.QuoteMSSQL(c.Name),
 			mapToSQLType(c.DataType),
 			nullability(c.Nullable),
 		))
 	}
-	cols = append(cols, fmt.Sprintf("[%s] datetime2 NOT NULL", LoadTimestampColumn))
+	cols = append(cols, fmt.Sprintf("%s datetime2 NOT NULL", sqlident.QuoteMSSQL(LoadTimestampColumn)))
 
-	stmt := fmt.Sprintf("CREATE TABLE [%s].[%s] (\n  %s\n);",
-		target.Schema, target.Name, strings.Join(cols, ",\n  "))
+	stmt := fmt.Sprintf("CREATE TABLE %s.%s (\n  %s\n);",
+		sqlident.QuoteMSSQL(target.Schema), sqlident.QuoteMSSQL(target.Name), strings.Join(cols, ",\n  "))
 
 	_, err = s.db.ExecContext(ctx, stmt)
 	return err
 }
 
 func (s *MSSQLSink) Truncate(ctx context.Context, target contracts.TargetTable) error {
-	stmt := fmt.Sprintf("TRUNCATE TABLE [%s].[%s]", target.Schema, target.Name)
+	if err := validateTarget(target); err != nil {
+		return err
+	}
+	stmt := fmt.Sprintf("TRUNCATE TABLE %s.%s",
+		sqlident.QuoteMSSQL(target.Schema), sqlident.QuoteMSSQL(target.Name))
 	_, err := s.db.ExecContext(ctx, stmt)
 	return err
+}
+
+func validateTarget(target contracts.TargetTable) error {
+	if err := sqlident.Validate(target.Schema); err != nil {
+		return fmt.Errorf("target schema: %w", err)
+	}
+	if err := sqlident.Validate(target.Name); err != nil {
+		return fmt.Errorf("target table: %w", err)
+	}
+	return nil
 }
 
 // WriteBatch inserts rows using SQL Server bulk copy for efficiency.
@@ -99,13 +128,20 @@ func (s *MSSQLSink) WriteBatch(ctx context.Context, target contracts.TargetTable
 	defer func() { _ = conn.Close() }()
 
 	// Column list in the exact order we will pass values.
+	if err := validateTarget(target); err != nil {
+		return 0, err
+	}
 	colNames := make([]string, 0, len(batch.Columns)+1)
 	for _, c := range batch.Columns {
+		if err := sqlident.Validate(c.Name); err != nil {
+			return 0, fmt.Errorf("column name: %w", err)
+		}
 		colNames = append(colNames, c.Name)
 	}
 	colNames = append(colNames, LoadTimestampColumn)
 
-	fullName := fmt.Sprintf("[%s].[%s]", target.Schema, target.Name)
+	fullName := fmt.Sprintf("%s.%s",
+		sqlident.QuoteMSSQL(target.Schema), sqlident.QuoteMSSQL(target.Name))
 
 	var rowsWritten int64
 	err = conn.Raw(func(driverConn any) error {

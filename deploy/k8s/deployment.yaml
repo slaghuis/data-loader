@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-loader
+  labels:
+    app: data-loader
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: data-loader
+  template:
+    metadata:
+      labels:
+        app: data-loader
+    spec:
+      containers:
+        - name: data-loader
+          image: data-loader:latest
+          ports:
+            - name: health
+              containerPort: 9090
+          envFrom:
+            - secretRef:
+                name: data-loader
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: data-loader
+type: Opaque
+stringData:
+  LOADER_METADATA_DSN: "sqlserver://user:pass@metadata:1433?database=loader_meta"
+  LOADER_SINK_DSN: "sqlserver://user:pass@sink:1433?database=loader_sink"
+  LOADER_LOG_LEVEL: "info"
+  LOADER_HEALTH_ADDR: "0.0.0.0:9090"

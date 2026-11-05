@@ -13,6 +13,7 @@ import (
 
 	"github.com/slaghuis/data-loader/internal/logging"
 	"github.com/slaghuis/data-loader/internal/sources"
+	"github.com/slaghuis/data-loader/internal/sqlident"
 	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
@@ -235,45 +236,33 @@ func buildDSN(params map[string]string) (string, error) {
 
 // buildQuery builds a Postgres SELECT with $1 placeholders and proper quoting.
 func buildQuery(load contracts.LoadConfig) (string, []any, error) {
-	obj := quoteQualifiedIdent(load.ObjectName)
+	obj, err := sqlident.QuotePostgresQualified(load.ObjectName)
+	if err != nil {
+		return "", nil, err
+	}
 	base := fmt.Sprintf("SELECT * FROM %s", obj)
 
 	if load.Mode == contracts.LoadModeDelta && load.WatermarkColumn != "" && load.LastWatermark.Value != "" {
+		if err := sqlident.Validate(load.WatermarkColumn); err != nil {
+			return "", nil, fmt.Errorf("watermark column: %w", err)
+		}
 		typed, err := parseWatermark(load.LastWatermark)
 		if err != nil {
 			return "", nil, err
 		}
-		q := fmt.Sprintf(`%s WHERE %s > $1 ORDER BY %s ASC`,
-			base,
-			quoteIdent(load.WatermarkColumn),
-			quoteIdent(load.WatermarkColumn),
-		)
+		wm := sqlident.QuotePostgres(load.WatermarkColumn)
+		q := fmt.Sprintf(`%s WHERE %s > $1 ORDER BY %s ASC`, base, wm, wm)
 		return q, []any{typed}, nil
 	}
 	if load.Mode == contracts.LoadModeDelta && load.WatermarkColumn != "" {
-		q := fmt.Sprintf(`%s ORDER BY %s ASC`, base, quoteIdent(load.WatermarkColumn))
+		if err := sqlident.Validate(load.WatermarkColumn); err != nil {
+			return "", nil, fmt.Errorf("watermark column: %w", err)
+		}
+		wm := sqlident.QuotePostgres(load.WatermarkColumn)
+		q := fmt.Sprintf(`%s ORDER BY %s ASC`, base, wm)
 		return q, nil, nil
 	}
 	return base, nil, nil
-}
-
-// quoteIdent double-quotes a single Postgres identifier, escaping embedded quotes.
-func quoteIdent(name string) string {
-	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
-}
-
-// quoteQualifiedIdent handles "schema.table" or just "table".
-// If already contains a double quote, it is passed through untouched
-// (assume the user knows what they're doing).
-func quoteQualifiedIdent(name string) string {
-	if strings.Contains(name, `"`) {
-		return name
-	}
-	parts := strings.Split(name, ".")
-	for i, p := range parts {
-		parts[i] = quoteIdent(p)
-	}
-	return strings.Join(parts, ".")
 }
 
 func parseWatermark(w contracts.Watermark) (any, error) {
@@ -368,9 +357,17 @@ func mapDriverType(dbType string) string {
 
 // currentMaxWatermark queries MAX(watermark_column) as a string.
 func (s *Source) currentMaxWatermark(ctx context.Context, obj, col string, wmType contracts.WatermarkType) (contracts.Watermark, error) {
-	q := fmt.Sprintf("SELECT MAX(%s) FROM %s", quoteIdent(col), quoteQualifiedIdent(obj))
+	if err := sqlident.Validate(col); err != nil {
+		return contracts.Watermark{}, fmt.Errorf("watermark column: %w", err)
+	}
+	quotedObj, err := sqlident.QuotePostgresQualified(obj)
+	if err != nil {
+		return contracts.Watermark{}, err
+	}
+	quotedCol := sqlident.QuotePostgres(col)
 	switch wmType {
 	case contracts.WatermarkDatetime:
+		q := fmt.Sprintf("SELECT MAX(%s) FROM %s", quotedCol, quotedObj)
 		var t sql.NullTime
 		if err := s.db.QueryRowContext(ctx, q).Scan(&t); err != nil {
 			return contracts.Watermark{}, err
@@ -380,15 +377,18 @@ func (s *Source) currentMaxWatermark(ctx context.Context, obj, col string, wmTyp
 		}
 		return contracts.Watermark{Type: wmType, Value: t.Time.UTC().Format(time.RFC3339Nano)}, nil
 	case contracts.WatermarkNumeric:
-		var f sql.NullFloat64
-		if err := s.db.QueryRowContext(ctx, q).Scan(&f); err != nil {
+		// Cast in SQL so large integers stay exact (aligns with D-03; full D-18 upper-bound is separate).
+		q := fmt.Sprintf("SELECT MAX(%s)::text FROM %s", quotedCol, quotedObj)
+		var raw sql.NullString
+		if err := s.db.QueryRowContext(ctx, q).Scan(&raw); err != nil {
 			return contracts.Watermark{}, err
 		}
-		if !f.Valid {
+		if !raw.Valid {
 			return contracts.Watermark{Type: wmType, Value: ""}, nil
 		}
-		return contracts.Watermark{Type: wmType, Value: strconv.FormatFloat(f.Float64, 'f', -1, 64)}, nil
+		return contracts.Watermark{Type: wmType, Value: strings.TrimSpace(raw.String)}, nil
 	default:
+		q := fmt.Sprintf("SELECT MAX(%s)::text FROM %s", quotedCol, quotedObj)
 		var raw sql.NullString
 		if err := s.db.QueryRowContext(ctx, q).Scan(&raw); err != nil {
 			return contracts.Watermark{}, err

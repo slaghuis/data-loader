@@ -1,0 +1,26 @@
+[Unit]
+Description=Edge Data Loader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dataloader
+Group=dataloader
+WorkingDirectory=/opt/data-loader
+EnvironmentFile=-/etc/data-loader/environment
+ExecStart=/usr/local/bin/data-loader
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+KillSignal=SIGTERM
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/data-loader
+
+[Install]
+WantedBy=multi-user.target

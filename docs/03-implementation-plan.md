@@ -3,14 +3,14 @@
 | Item | Value |
 |------|-------|
 | Document | 03 – Implementation Plan |
-| Version | 1.0 |
-| Last updated | 2026-10-14 |
+| Version | 1.1 |
+| Last updated | 2026-11-05 |
 | Related | [01 Requirements](01-project-requirements.md) · [02 Architecture](02-architecture.md) · [04 AI Rules](04-ai-rules.md) · [05 Decisions](05-decisions.md) |
 
 | Phase | Theme | Status |
 |-------|-------|--------|
 | 1 | Core loader: four sources, MSSQL sink, metadata, scheduling, ops endpoints | ✅ Complete |
-| 2 | Engineering quality: AI-rules compliance, tests, defect fixes, observability, CI gates | ⬜ Next |
+| 2 | Engineering quality: AI-rules compliance, tests, defect fixes, observability, CI gates | 🟡 In progress (High/Medium defects + unit harness done; migrations/metrics/integration open) |
 | 3 | Remote configuration API with schema discovery and top-10 preview | ⬜ Planned |
 | 4 | Multiple sinks, including Microsoft Fabric | ⬜ Planned |
 
@@ -76,9 +76,9 @@ Built iteratively between 2026-09-16 and 2026-10-14. These items reconstruct wha
 
 ### 2.1 Code hygiene
 
-- [ ] Add a `.gitattributes` file (`*.go text eol=lf`), then renormalise line endings and run `gofmt -w` in a single commit with no logic changes.
-- [ ] Add a `.golangci.yml` file enabling `errcheck`, `govet`, `staticcheck`, `revive` (exported-symbol docs), `gosec`, `bodyclose`, `contextcheck`, `errorlint`, `gocyclo` (threshold 15) and `misspell`.
-- [ ] Remove dead code: `config.ResolveSecrets`, the unreachable `errFirstRunInit` / `IsFirstRunInit` path in `sqlserver`, and the `sql.ErrNoRows` branch in the runner (D-10, D-13).
+- [x] Add a `.gitattributes` file (`* text=auto eol=lf`), then renormalise line endings and run `gofmt -w` in a single commit with no logic changes.
+- [x] Add a `.golangci.yml` file enabling `errcheck`, `govet`, `staticcheck`, `revive` (exported-symbol docs), `gosec`, `bodyclose`, `contextcheck`, `errorlint`, `gocyclo` (threshold 15) and `misspell`.
+- [ ] Remove dead code: `config.ResolveSecrets`, the unreachable `errFirstRunInit` / `IsFirstRunInit` path in `sqlserver` (D-13). *(D-10 dead `sql.ErrNoRows` branch removed with the runner fix.)*
 - [ ] Inject the build version with `-ldflags "-X main.version=…"` and report it in `/status` (D-12).
 - [x] Rename `README.MD` to `README.md` (the design indexer's include pattern is case-sensitive).
 - [ ] Split the README's module design notes into `docs/modules/*.md`.
@@ -87,47 +87,49 @@ Built iteratively between 2026-09-16 and 2026-10-14. These items reconstruct wha
 
 These defects were found by reviewing the code while writing this documentation. Severity reflects the impact on data correctness first and operability second. Every fix must come with a regression test.
 
-| ID | Severity | Location | Defect | Fix |
-|----|----------|----------|--------|-----|
-| D-01 | **High** | `internal/logging/dbhandler.go` (`WithAttrs`, `Handle`) | Attributes added with `logger.With(...)` reach the console handler but are **not** stored in the DB entry. `Handle` only sees the record's own attributes. The runner attaches `load_id`, `source_id`, `run_uuid` and `load_name` with `With`, so those columns in `meta_log_entries` are mostly NULL and runs cannot be correlated with their logs. | Store the accumulated attributes (and the group prefix) in `DBHandler` and merge them in `Handle`. |
-| D-02 | Medium | `cmd/loader/main.go` (final log line), `dbhandler.go` (`Close`) | `dbHandler.Close` closes the channel, and the next line logs `data-loader stopped`. That sends on a closed channel, so **every graceful shutdown ends in a panic**. | Add a `closed` flag guarded by a mutex or `atomic.Bool`, and skip the DB enqueue after close. |
-| D-03 | **High** | `internal/sources/sqlserver/source.go` (`currentMaxWatermark`, numeric case) | The numeric watermark is scanned into `float64` and formatted with `%v`. Values ≥ 1,000,000 become `1.234567e+06` (confirmed with the Go 1.26 toolchain), and values above 2^53 lose precision. Comparing an `int`/`bigint`/`decimal` column with that string parameter is **expected to fail with a conversion error** (to be confirmed by integration test). Precision loss can also skip or duplicate rows. | Scan into `sql.NullString` and cast in SQL (`CONVERT(varchar(40), MAX(col))`). Store the watermark verbatim. Bind it typed (`int64` or a decimal string). |
-| D-04 | Medium | `internal/pipeline/runner.go` (watermark step) | A failed `UpsertWatermark` is logged as a warning, but the run is still marked `success`. The next run re-reads the same window and **duplicates rows**. | Fail the run (status `failed`, error recorded). |
-| D-05 | Medium | `runner.go` (first-batch handler) | `replace` truncates only when the first batch arrives. A source that returns 0 rows leaves the **stale previous contents**. Truncate and insert are also not atomic: a failure mid-load leaves a partial table. | Truncate before reading (once the target is ensured). For atomicity, load into `<table>__staging` and swap with `sp_rename` inside a transaction (ADR-020, to be written). |
-| D-06 | Low | `seeds/seed.yaml` | Uses `enabled:`, but the strict parser (`KnownFields(true)`) only accepts `is_enabled:`. The **default `-file` of `cmd/seed` fails to parse**. | Fix the sample, and add a test that parses every file in `seeds/`. |
-| D-07 | Medium (High before Phase 3) | `sqlserver/source.go` (`sanitizeObject`, query builders), `sink/mssql.go` (DDL, truncate), `postgres/source.go` (`quoteQualifiedIdent`) | Identifiers are wrapped in `[...]` without escaping `]`. The comment claims suspicious input is rejected, but it is not. Postgres passes through any name containing `"` unchanged. Column names come from the source result set. The risk is acceptable while only DBAs write metadata, but it **must be fixed before the API accepts identifiers**. | Add `quoteMSSQLIdent` (replace `]` with `]]`) and a strict identifier validator (`^[\p{L}_][\p{L}\p{N}_@$# .-]{0,127}$`), and always quote. Fuzz-test the validator. |
-| D-08 | Medium | `sqlserver/source.go` (`buildDSN`) | The DSN is built with `Sprintf` without URL escaping. Passwords containing `@ : / ? #` break the connection string. | Build the DSN with `net/url` (as the Postgres module already does). |
-| D-09 | Medium | `internal/scheduler/scheduler.go` (`trigger`, `Stop`) | Runs use `context.Background()`, and the context returned by `cron.Stop()` is ignored. On shutdown, in-flight runs are killed and left as `running` in `meta_load_runs` permanently, because housekeeping never prunes `running` rows. | Use a scheduler-owned cancellable context. In `Stop`, wait up to `LOADER_SHUTDOWN_TIMEOUT_SEC` and then mark the remaining runs `aborted`. At startup, mark orphaned `running` rows `aborted`. |
-| D-10 | Low | `runner.go` (`GetWatermark` error check) | Checks `sql.ErrNoRows`, but the repository returns `(nil, nil)` when no row exists. This is a dead branch. | Remove it. |
-| D-11 | Low | `internal/runstate/registry.go` (`Snapshot`) | The comment says the output is sorted, but it iterates a map, so `/status` order is random. | Sort by `LoadID`. |
-| D-12 | Low | `cmd/loader/main.go` (health server construction) | The version is hard-coded to `"dev"`. | Inject it with ldflags (see 2.1). |
-| D-13 | Low | `internal/config/secrets.go` | `ResolveSecrets` is unused, and it silently resolves missing variables to `""`, unlike `ResolveParams`. | Delete it. |
-| D-14 | Low (architecture) | `sources/modbus`, `sources/opcua` | Package-level `tagRepo` / `nodeRepo` globals are set from `main`. This is hidden coupling and blocks parallel tests. | Inject a `PointCatalog` (see [02 – Interface Definitions](02-architecture.md#interface-definitions)). |
-| D-15 | Low | all `*.go` files | CRLF line endings: `gofmt -l` reports every file. | See 2.1. |
-| D-16 | Medium | `pipeline.yaml` | `coverage_min: 0`, `integration.enabled: false`, and `deploy.manifests: ./deploy/k8s` does not exist. | Raise to 80 and enable integration once the tests exist. Add the `deploy/` assets. |
-| D-17 | Info (performance) | `runner.go` (source construction) | A source is built, opened and closed **on every run**. The README's design notes say the Modbus/OPC UA connection "stays open for the next tick", which is not what the code does. For OPC UA at 1–5 s intervals this means a full session handshake (and secure-channel crypto) per poll. | Correct the README now. Consider a per-source connection cache with idle eviction (ADR-021, to be written) after load testing. |
-| D-18 | Low | `postgres/source.go` | Delta has no upper-bound snapshot (unlike SQL Server). Numeric watermarks also go through `float64`, which loses precision above 2^53. | Align with the SQL Server strategy and keep numerics as strings. |
-| D-19 | Medium | `internal/metadata/repository.go` (`ListEnabledLoads`) | Filters on `meta_loads.is_enabled` only, so **disabling a source does not stop its loads**. | Join on `meta_sources.is_enabled = 1` and include it in the fingerprint (already included). |
+Status key: ✅ closed · 🟡 partial · ⬜ open.
+
+| ID | Severity | Status | Location | Defect | Fix |
+|----|----------|--------|----------|--------|-----|
+| D-01 | **High** | ✅ | `internal/logging/dbhandler.go` | `With` attrs not stored in DB entries. | Store attrs/groups on `DBHandler`; merge in `Handle`. Regression: `TestDBHandler_WithAttrs_PersistsLoadID_D01`. |
+| D-02 | Medium | ✅ | `dbhandler.go` `Close` | Log after `Close` panics (send on closed channel). | `atomic.Bool` closed flag; skip enqueue after close. Regression: `TestDBHandler_Close_ThenLog_NoPanic_D02`. |
+| D-03 | **High** | ✅ | `sqlserver/source.go` | Numeric watermark via `float64` + `%v`. | `CONVERT(varchar(40), MAX(col))` + `NullString`. Tests in `dsn_test.go`. |
+| D-04 | Medium | ✅ | `pipeline/runner.go` | Failed `UpsertWatermark` still marks success. | Fail the run. Regression: `TestRunner_UpsertWatermarkFailure_FailsRun_D04`. |
+| D-05 | Medium | 🟡 | `pipeline/runner.go` | `replace` skipped truncate on zero rows. | Truncate **before** `Read` when the table exists. Atomic staging deferred (ADR-020, not written). Regressions: `TestRunner_Replace_*_D05`. |
+| D-06 | Low | ⬜ | `seeds/seed.yaml` | Uses `enabled:` instead of `is_enabled:`. | Fix sample + parse-all-seeds test. |
+| D-07 | Medium | ✅ | `internal/sqlident`, sources, sink | Identifier quoting / validation gaps. | `Validate` + `QuoteMSSQL` / `QuotePostgres`; fuzz test. |
+| D-08 | Medium | ✅ | `sqlserver/source.go` `buildDSN` | Unescaped DSN. | `net/url` builder. Regression: `TestBuildDSN_EscapesSpecialPassword_D08`. |
+| D-09 | Medium | ✅ | `scheduler/scheduler.go` | Shutdown leaves `running` rows. | Scheduler context + `AbortRunningRuns` on start/stop. Regressions in `scheduler_test.go`. |
+| D-10 | Low | ✅ | `runner.go` | Dead `sql.ErrNoRows` branch. | Removed with D-04/D-05 runner rewrite. |
+| D-11 | Low | ⬜ | `runstate/registry.go` | Unsorted `/status` snapshot. | Sort by `LoadID`. |
+| D-12 | Low | ⬜ | `cmd/loader/main.go` | Hard-coded `"dev"` version. | ldflags injection. |
+| D-13 | Low | ⬜ | `config/secrets.go` | Unused `ResolveSecrets`. | Delete it. |
+| D-14 | Low | ⬜ | modbus/opcua | Package-level repo globals. | Inject `PointCatalog`. |
+| D-15 | Low | ✅ | all `*.go` | CRLF line endings. | `.gitattributes` + renormalise (done on main). |
+| D-16 | Medium | 🟡 | `pipeline.yaml` / `deploy/` | Missing deploy assets; coverage gate still 0. | `deploy/k8s` + `deploy/systemd` added. Leave `coverage_min: 0` / `integration.enabled: false` until coverage and integration land. |
+| D-17 | Info | 🟡 | runner / README | Per-run open/close. | README corrected earlier; connection cache = ADR-021. |
+| D-18 | Low | ⬜ | `postgres/source.go` | No upper-bound snapshot; numeric float path. | Align with SQL Server. *(Numeric string cast applied while fixing D-07; upper-bound still open.)* |
+| D-19 | Medium | ✅ | `metadata/repository.go` | Disabled source does not stop loads. | Join `meta_sources.is_enabled = 1`. |
 
 ### 2.3 Dependency injection and Clean Architecture
 
-- [ ] Introduce narrow interfaces in consuming packages: `pipeline.RunStore`, `pipeline.SourceBuilder`, `scheduler.LoadCatalog`, `scheduler.Executor`, `housekeeping.Pruner`, `logging.LogWriter`.
+- [x] Introduce narrow interfaces used by tests: `pipeline.RunStore`, `pipeline.SourceBuilder`, `logging.LogWriter`, `scheduler.RunAborter`. *(Full sweep — `LoadCatalog` / `Executor` / `Pruner` / clocks — still open.)*
 - [ ] Replace the Modbus/OPC UA repository globals with an injected `contracts.PointCatalog`, so the adapters no longer import `internal/metadata` (D-14).
 - [ ] Move domain rules (first-run initialisation, forced append, watermark advance) into tested functions in `pkg/contracts` or a new `internal/domain`.
 - [ ] Inject a clock (`func() time.Time`) where time affects behaviour (runner, housekeeping, watermark lag).
 
 ### 2.4 Tests
 
-- [ ] Unit tests per [02 – Testing Requirements](02-architecture.md#testing-requirements), table-driven, stdlib `testing` plus `github.com/google/go-cmp`.
-- [ ] Fakes for `Source`, `Sink`, `RunStore` and `LoadCatalog` in `internal/testutil` (hand-written; no mocking framework).
+- [x] Unit tests for High/Medium defect fixes; stdlib `testing` plus `github.com/google/go-cmp`.
+- [x] Fakes for `Source`, `Sink`, and `RunStore` in `internal/testutil` (hand-written; no mocking framework).
 - [ ] Integration suites under `test/integration` (build tag `integration`) with `testcontainers-go`: SQL Server, PostgreSQL, the in-process Modbus server, and an OPC UA simulator.
 - [ ] Failure tests (source, sink or metadata outage; SIGTERM mid-run) and load tests (see 02).
-- [ ] Fuzz tests: identifier validation/quoting (D-07), Modbus decoding, seed parsing.
-- [ ] Gate: `go test -race ./...` with ≥ 80% coverage per package, excluding `cmd/`.
+- [x] Fuzz tests: identifier validation/quoting (D-07). *(Modbus decoding and seed parsing still open.)*
+- [ ] Gate: `go test -race ./...` with ≥ 80% coverage per package, excluding `cmd/`. *(Race tests pass; coverage gate not raised yet.)*
 
 ### 2.5 Versioned migrations
 
-- [ ] Adopt `pressly/goose` v3 with embedded SQL migrations in `migrations/` (ADR-012).
+- [ ] Adopt `pressly/goose` v3 with embedded SQL migrations in `migrations/` (ADR-012) — **deferred; ADR-012 remains Proposed; AutoMigrate stays for this slice.**
 - [ ] Baseline migration `0001` equals the current AutoMigrate schema (generated, then hand-reviewed). Detect existing databases and mark them as baselined.
 - [ ] Add explicit foreign keys and an index on `meta_load_runs(status, started_at)`.
 - [ ] Remove `AutoMigrate` from the startup path. `loader migrate up|status` becomes an explicit step.
@@ -136,11 +138,11 @@ These defects were found by reviewing the code while writing this documentation.
 
 - [ ] Prometheus `/metrics` on the health server (metric list in [02 – Monitoring](02-architecture.md#monitoring-requirements)).
 - [ ] An alert rule file (`deploy/monitoring/alerts.yaml`) and a Grafana dashboard JSON.
-- [ ] A counter for dropped DB log records.
+- [x] An in-process counter for dropped DB log records (`DBHandler.Dropped`). *(Prometheus export still open.)*
 
 ### 2.7 Delivery assets and CI
 
-- [ ] `deploy/systemd/data-loader.service`, `deploy/k8s/` (Deployment with `replicas: 1`, `strategy: Recreate`, liveness probe on `/healthz`, readiness on `/readyz`, Secret-mounted environment).
+- [x] `deploy/systemd/data-loader.service`, `deploy/k8s/` (Deployment with `replicas: 1`, `strategy: Recreate`, liveness probe on `/healthz`, readiness on `/readyz`, Secret-mounted environment).
 - [ ] `pipeline.yaml`: `coverage_min: 80`, `integration.enabled: true`.
 - [ ] Dockerfile review: distroless base image, non-root user, `HEALTHCHECK`.
 
@@ -149,15 +151,15 @@ These defects were found by reviewing the code while writing this documentation.
 - [ ] Godoc on every exported identifier (enforced by `revive`).
 - [ ] Package `doc.go` for each package explaining its responsibility and invariants.
 - [ ] Runbook `docs/runbook.md`: stuck runs, watermark rewind, adding a site, rotating secrets.
-- [ ] Update this plan and the defect register as items close.
+- [x] Update this plan and the defect register as items close.
 
 ### Phase 2 exit criteria
 
-1. All **High** and **Medium** defects closed, each with a regression test.
-2. `golangci-lint run` and `gofmt -l` are clean. `go test -race ./...` passes with ≥ 80% coverage per package.
-3. Integration suite green in CI for all four sources and the MSSQL sink.
-4. `/metrics` is live and the alert rules are committed.
-5. No package-level mutable dependencies remain, and the application layer depends only on interfaces.
+1. All **High** and **Medium** defects closed, each with a regression test. — **High closed; Medium closed except D-05 atomicity (ADR-020) and D-16 coverage/integration gates.**
+2. `golangci-lint run` and `gofmt -l` are clean. `go test -race ./...` passes with ≥ 80% coverage per package. — **Race green; coverage gate and lint-in-CI still open.**
+3. Integration suite green in CI for all four sources and the MSSQL sink. — **Open.**
+4. `/metrics` is live and the alert rules are committed. — **Open** (dropped counter exists in-process only).
+5. No package-level mutable dependencies remain, and the application layer depends only on interfaces. — **Partial** (`LogWriter` / `RunStore` / `SourceBuilder` / `RunAborter` in; Modbus/OPC UA globals remain).
 
 ---
 

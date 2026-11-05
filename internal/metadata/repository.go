@@ -27,11 +27,31 @@ func NewRepository(db *gorm.DB) *Repository {
 
 func (r *Repository) ListEnabledLoads(ctx context.Context) ([]Load, error) {
 	var loads []Load
+	// D-19: a disabled source must stop its loads, even if the load row is enabled.
 	err := r.db.WithContext(ctx).
 		Preload("Source").
-		Where("is_enabled = ?", true).
+		Joins("JOIN meta_sources ON meta_sources.id = meta_loads.source_id").
+		Where("meta_loads.is_enabled = ? AND meta_sources.is_enabled = ? AND meta_sources.deleted_at IS NULL", true, true).
 		Find(&loads).Error
 	return loads, err
+}
+
+// AbortRunningRuns marks every load run still in status 'running' as 'aborted'.
+// Used on startup (orphan cleanup) and after a shutdown timeout (D-09).
+func (r *Repository) AbortRunningRuns(ctx context.Context, reason string) (int64, error) {
+	now := time.Now().UTC()
+	if reason == "" {
+		reason = "aborted"
+	}
+	res := r.db.WithContext(ctx).Model(&LoadRun{}).
+		Where("status = ?", "running").
+		Updates(map[string]any{
+			"status":        "aborted",
+			"finished_at":   now,
+			"error_message": reason,
+			"duration_ms":   gorm.Expr("DATEDIFF(millisecond, started_at, ?)", now),
+		})
+	return res.RowsAffected, res.Error
 }
 
 func (r *Repository) GetLoad(ctx context.Context, id int64) (*Load, error) {
