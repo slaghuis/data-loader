@@ -4,8 +4,8 @@
 |------|-------|
 | Document | 01 – Project Requirements |
 | Version | 1.0 |
-| Last updated | 2026-10-14 |
-| Status | Phase 1 complete; Phases 2–4 planned |
+| Last updated | 2026-11-09 |
+| Status | Phase 1–2 complete; Phase 2.2 backfill next; Phases 3–4 planned |
 | Related | [02 Architecture](02-architecture.md) · [03 Implementation Plan](03-implementation-plan.md) · [04 AI Rules](04-ai-rules.md) · [05 Decisions](05-decisions.md) |
 
 ## Objective
@@ -61,6 +61,7 @@ The loader described in this document already exists and runs (Phase 1). It was 
 | 1 ✅ | Hot reload of metadata (periodic and on SIGHUP) |
 | 1 ✅ | YAML seeding CLI |
 | 2 | Compliance with [04 AI Rules](04-ai-rules.md): tests at ≥ 80% coverage, dependency injection, documentation, defect fixes, versioned migrations, metrics, CI gates |
+| 2.2 ✅ | Opt-in historic backfill for SQL delta loads (dual-cursor sibling schedule, ADR-022 / FR-015) |
 | 3 | REST management API for sources, loads, Modbus tags and OPC UA nodes |
 | 3 | Source schema discovery and a top-10-row data preview |
 | 3 | Operational API: connection test, run now, reset watermark, run and log history |
@@ -401,6 +402,41 @@ Credentials are not stored in plain text in the metadata database.
 ### Processing
 
 - Any param value of the form `$env:NAME` is replaced at run time with environment variable `NAME`. A missing variable fails the run with a clear error.
+
+---
+
+## FR-015 – Opt-in historic backfill (SQL delta) ✅ *(Phase 2.2)*
+
+### Description
+
+When analytics need history below the live watermark, an operator can request an intentional backfill without changing the default first-run behaviour (ADR-006 / BR-003).
+
+### Inputs
+
+- Parent `meta_loads` fields: `backfill_required`, optional `backfill_stop` (same type semantics as the watermark), resulting `backfill_completed_at`.
+- SQL sources only (`sqlserver`, `postgres`), `mode = delta`.
+
+### Processing
+
+1. Parent keeps FR-004 first-run (`MAX`, load no rows) then normal forward delta.
+2. A sibling `meta_loads` row (`backfill_of_load_id`) is created, scheduled ~1 minute after the parent, with the same `batch_size` and mapping.
+3. After the parent has a watermark, the sibling freezes that value as `backfill_ceiling`, seeds its watermark at the resolved stop (`MIN` if stop empty), and reads  
+   `wm > last AND wm <= min(snapshot_upper, backfill_ceiling)`.
+4. When the sibling cursor reaches the ceiling, disable the sibling, clear `backfill_required`, set `backfill_completed_at`.
+5. Re-entry after completion is an explicit new request (new stop + flag), not an automatic rewind.
+
+### Outputs
+
+- Historic rows in the sink below the live cursor. Sibling `meta_load_runs` for audit. Parent completion timestamp.
+
+### Acceptance
+
+- [x] Optional backfill stop watermark (same type as the primary watermark).
+- [x] Separate scheduled sibling load for the backfill scope.
+- [x] Sibling loads history between stop and the frozen forward ceiling.
+- [x] Sibling removed from the schedule when complete.
+
+> **Decision:** [ADR-022](../ADR/0022-opt-in-historic-backfill-for-delta-loads.md). Tracked in [03 – Phase 2.2](03-implementation-plan.md#phase-22--opt-in-historic-backfill-adr-022--7-).
 
 ---
 

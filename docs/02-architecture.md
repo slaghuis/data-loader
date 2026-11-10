@@ -4,7 +4,7 @@
 |------|-------|
 | Document | 02 – Architecture |
 | Version | 1.0 |
-| Last updated | 2026-10-14 |
+| Last updated | 2026-11-09 |
 | Related | [01 Requirements](01-project-requirements.md) · [03 Implementation Plan](03-implementation-plan.md) · [04 AI Rules](04-ai-rules.md) · [05 Decisions](05-decisions.md) |
 
 Sections marked **(as built)** describe the Phase 1 code. Sections marked **(target)** describe the Phase 2–4 design.
@@ -336,6 +336,7 @@ Created by versioned goose migrations (`loader migrate up`, ADR-012). Baseline `
 ```mermaid
 erDiagram
     meta_sources ||--o{ meta_loads : "has"
+    meta_loads ||--o| meta_loads : "backfill sibling"
     meta_loads ||--o| meta_watermarks : "tracks"
     meta_loads ||--o{ meta_load_runs : "executes"
     meta_loads ||--o{ meta_modbus_tags : "polls"
@@ -367,6 +368,11 @@ erDiagram
         bit auto_create_table
         nvarchar cron_expression
         bit is_enabled
+        bit backfill_required
+        nvarchar backfill_stop
+        datetime backfill_completed_at
+        bigint backfill_of_load_id FK
+        nvarchar backfill_ceiling
         datetime deleted_at
     }
     meta_watermarks {
@@ -459,7 +465,9 @@ id, name, kind, description, params_json, is_enabled, created_at, updated_at, de
 meta_loads
 ----------
 id, source_id, name, object_name, target_schema, target_table, mode, watermark_column,
-watermark_type, batch_size, auto_create_table, cron_expression, is_enabled, timestamps
+watermark_type, batch_size, auto_create_table, cron_expression, is_enabled,
+backfill_required, backfill_stop, backfill_completed_at, backfill_of_load_id, backfill_ceiling,
+timestamps
 ```
 
 ### Field Definitions
@@ -478,6 +486,11 @@ watermark_type, batch_size, auto_create_table, cron_expression, is_enabled, time
 | auto_create_table | bit, default 1 | Create target on first batch if missing |
 | cron_expression | nvarchar(100) | robfig/cron v3 (`@every 5m`, `0 */2 * * *`) |
 | is_enabled | bit, default 1 | Scheduled only when true |
+| backfill_required | bit, default 0 | Parent: request historic fill (ADR-022) |
+| backfill_stop | nvarchar(100), null | Parent: lower bound (exclusive); empty ⇒ resolve `MIN` once |
+| backfill_completed_at | datetime2, null | Parent: set when sibling finishes |
+| backfill_of_load_id | bigint FK, null, unique | Sibling: points at parent load |
+| backfill_ceiling | nvarchar(100), null | Sibling: frozen upper bound (parent WM at activation) |
 
 ## Watermark
 
@@ -1051,7 +1064,7 @@ type Flusher interface {
 
 ## Rule 1 — First delta run never back-loads
 
-A delta load without a stored watermark records the source's current `MAX(watermark_column)` and loads zero rows. Historical data requires an explicit full load or a watermark rewind.
+A delta load without a stored watermark records the source's current `MAX(watermark_column)` and loads zero rows. Accidental full-history loads are forbidden (BR-003 / ADR-006). Intentional history uses **opt-in dual-cursor backfill** (ADR-022 / FR-015): a sibling load walks from `backfill_stop` up to a frozen parent ceiling while the parent continues forward. Manual watermark rewind remains a valid ops workaround.
 
 ## Rule 2 — Watermark advances only after a successful write
 

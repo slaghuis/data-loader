@@ -29,6 +29,22 @@ WHERE load_id = <id>;
 
 Do not delete the watermark row unless you intend a first-run init (seed `MAX`, load no rows).
 
+## Historic backfill (ADR-022)
+
+Opt-in dual-cursor fill for SQL `delta` loads. Prefer this over a manual rewind when you need history **and** live catch-up at the same time.
+
+1. On the **parent** load set `backfill_required = 1` and optionally `backfill_stop` (exclusive lower bound; omit to resolve `MIN(watermark_column)` once). Seed YAML: `backfill_required: true`, `backfill_stop: "…"`.
+2. Run `loader migrate up` if needed (migration `00003_backfill_columns`), then HUP / wait for reload.
+3. After the parent’s first-run watermark init, the coordinator creates `{name}#backfill`, freezes `backfill_ceiling`, seeds the sibling watermark at the stop, and enables it (cron ≈ parent + 1 minute for 5-field expressions).
+4. Monitor sibling runs in `meta_load_runs` / `/status`. Each tick loads at most `batch_size` rows under the ceiling.
+5. When the sibling cursor reaches the ceiling it is disabled; parent gets `backfill_completed_at` and `backfill_required = 0`.
+
+**Cancel:** `UPDATE meta_loads SET is_enabled = 0 WHERE backfill_of_load_id = <parent_id>;` and clear `backfill_required` on the parent.
+
+**Re-entry:** set a new `backfill_stop` and `backfill_required = 1` on the parent (explicit only).
+
+**Source pool (ADR-021):** parent and sibling share `source_id` and serialize on the pool lease while a run holds it.
+
 ## Adding a site / load
 
 1. Add YAML under `seeds/` using `is_enabled:` (not `enabled:`).

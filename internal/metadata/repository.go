@@ -62,6 +62,42 @@ func (r *Repository) GetLoad(ctx context.Context, id int64) (*Load, error) {
 	return &l, nil
 }
 
+// ListBackfillParents returns enabled SQL delta parents with backfill_required
+// that are not themselves siblings (ADR-022).
+func (r *Repository) ListBackfillParents(ctx context.Context) ([]Load, error) {
+	var loads []Load
+	err := r.db.WithContext(ctx).
+		Preload("Source").
+		Where("backfill_required = ? AND backfill_of_load_id IS NULL", true).
+		Find(&loads).Error
+	return loads, err
+}
+
+// GetSiblingByParent returns the backfill sibling for parentID, or nil.
+func (r *Repository) GetSiblingByParent(ctx context.Context, parentID int64) (*Load, error) {
+	var l Load
+	err := r.db.WithContext(ctx).Preload("Source").
+		Where("backfill_of_load_id = ?", parentID).
+		First(&l).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &l, nil
+}
+
+// CreateLoad inserts a new load row.
+func (r *Repository) CreateLoad(ctx context.Context, load *Load) error {
+	return r.db.WithContext(ctx).Create(load).Error
+}
+
+// SaveLoad updates an existing load row.
+func (r *Repository) SaveLoad(ctx context.Context, load *Load) error {
+	return r.db.WithContext(ctx).Save(load).Error
+}
+
 // ---------- Watermarks ----------
 
 func (r *Repository) GetWatermark(ctx context.Context, loadID int64) (*Watermark, error) {
@@ -223,18 +259,23 @@ func (r *Repository) MetadataFingerprint(ctx context.Context) (string, error) {
 		IsEnabled  bool
 	}
 	type loadFP struct {
-		ID              int64
-		SourceID        int64
-		CronExpression  string
-		Mode            string
-		WatermarkColumn string
-		WatermarkType   string
-		ObjectName      string
-		TargetSchema    string
-		TargetTable     string
-		BatchSize       int
-		AutoCreateTable bool
-		IsEnabled       bool
+		ID                  int64
+		SourceID            int64
+		CronExpression      string
+		Mode                string
+		WatermarkColumn     string
+		WatermarkType       string
+		ObjectName          string
+		TargetSchema        string
+		TargetTable         string
+		BatchSize           int
+		AutoCreateTable     bool
+		IsEnabled           bool
+		BackfillRequired    bool
+		BackfillStop        string
+		BackfillOfLoadID    *int64
+		BackfillCeiling     string
+		BackfillCompletedAt *time.Time
 	}
 
 	var sources []sourceFP
@@ -249,7 +290,7 @@ func (r *Repository) MetadataFingerprint(ctx context.Context) (string, error) {
 	var loads []loadFP
 	if err := r.db.WithContext(ctx).
 		Model(&Load{}).
-		Select("id, source_id, cron_expression, mode, watermark_column, watermark_type, object_name, target_schema, target_table, batch_size, auto_create_table, is_enabled").
+		Select("id, source_id, cron_expression, mode, watermark_column, watermark_type, object_name, target_schema, target_table, batch_size, auto_create_table, is_enabled, backfill_required, backfill_stop, backfill_of_load_id, backfill_ceiling, backfill_completed_at").
 		Order("id").
 		Scan(&loads).Error; err != nil {
 		return "", fmt.Errorf("fingerprint loads: %w", err)

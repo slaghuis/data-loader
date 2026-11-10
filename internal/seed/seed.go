@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/slaghuis/data-loader/internal/backfill"
 	"github.com/slaghuis/data-loader/internal/metadata"
 )
 
@@ -77,6 +78,9 @@ func Apply(ctx context.Context, db *gorm.DB, f *File) (Report, error) {
 
 			l, action, err := upsertLoad(tx, spec, src.ID)
 			if err != nil {
+				return fmt.Errorf("load %q: %w", spec.Name, err)
+			}
+			if err := backfill.ValidateParent(*l, src.Kind); err != nil {
 				return fmt.Errorf("load %q: %w", spec.Name, err)
 			}
 			rep.recordLoad(action, spec.Name)
@@ -150,18 +154,20 @@ func upsertLoad(tx *gorm.DB, spec LoadSpec, sourceID int64) (*metadata.Load, Act
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		l = metadata.Load{
-			Name:            spec.Name,
-			SourceID:        sourceID,
-			CronExpression:  spec.CronExpression,
-			Mode:            spec.Mode,
-			ObjectName:      spec.ObjectName,
-			WatermarkColumn: spec.WatermarkColumn,
-			WatermarkType:   spec.WatermarkType,
-			TargetSchema:    spec.TargetSchema,
-			TargetTable:     spec.TargetTable,
-			BatchSize:       spec.BatchSize,
-			AutoCreateTable: boolOr(spec.AutoCreateTable, true),
-			IsEnabled:       boolOr(spec.IsEnabled, true),
+			Name:             spec.Name,
+			SourceID:         sourceID,
+			CronExpression:   spec.CronExpression,
+			Mode:             spec.Mode,
+			ObjectName:       spec.ObjectName,
+			WatermarkColumn:  spec.WatermarkColumn,
+			WatermarkType:    spec.WatermarkType,
+			TargetSchema:     spec.TargetSchema,
+			TargetTable:      spec.TargetTable,
+			BatchSize:        spec.BatchSize,
+			AutoCreateTable:  boolOr(spec.AutoCreateTable, true),
+			IsEnabled:        boolOr(spec.IsEnabled, true),
+			BackfillRequired: boolOr(spec.BackfillRequired, false),
+			BackfillStop:     spec.BackfillStop,
 		}
 		if err := tx.Create(&l).Error; err != nil {
 			return nil, "", err
@@ -181,6 +187,12 @@ func upsertLoad(tx *gorm.DB, spec LoadSpec, sourceID int64) (*metadata.Load, Act
 		l.BatchSize = spec.BatchSize
 		l.AutoCreateTable = boolOr(spec.AutoCreateTable, l.AutoCreateTable)
 		l.IsEnabled = boolOr(spec.IsEnabled, l.IsEnabled)
+		if spec.BackfillRequired != nil {
+			l.BackfillRequired = *spec.BackfillRequired
+		}
+		if spec.BackfillStop != "" || spec.BackfillRequired != nil {
+			l.BackfillStop = spec.BackfillStop
+		}
 		if err := tx.Save(&l).Error; err != nil {
 			return nil, "", err
 		}

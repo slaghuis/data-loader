@@ -30,13 +30,13 @@ Incremental loads need a durable high-water mark per load. Watermark columns may
 
 - A watermark column on `meta_loads` (mixes user-owned configuration with loader-owned state, and has no audit trail).
 - Typed columns per watermark type (schema churn).
-- Back-load on first run (risky for multi-million-row tables).
+- Back-load on first run (risky for multi-million-row tables). Intentional history is handled separately by [ADR-022](0022-opt-in-historic-backfill-for-delta-loads.md) (opt-in sibling cursor), which extends this ADR without changing the default.
 
 ## Consequences
 
 Positive:
 
-- Portable across types. Auditable. Safe default for new loads.
+- Portable across types. Auditable. Safe default for new loads. Extended by ADR-022 for opt-in historic backfill.
 
 Negative:
 

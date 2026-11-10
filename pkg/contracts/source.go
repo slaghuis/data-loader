@@ -23,6 +23,9 @@ type LoadConfig struct {
 	WatermarkType   WatermarkType
 	LastWatermark   Watermark // current known watermark, empty on first run
 	BatchSize       int
+	// WatermarkCeiling, when non-empty, caps the delta upper bound (ADR-022
+	// sibling backfill). Reads use TOP/LIMIT BatchSize and advance by last row.
+	WatermarkCeiling string
 }
 
 // BatchHandler is called by a Source for each batch of rows read.

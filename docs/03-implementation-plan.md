@@ -3,8 +3,8 @@
 | Item | Value |
 |------|-------|
 | Document | 03 – Implementation Plan |
-| Version | 1.2 |
-| Last updated | 2026-11-05 |
+| Version | 1.3 |
+| Last updated | 2026-11-09 |
 | Related | [01 Requirements](01-project-requirements.md) · [02 Architecture](02-architecture.md) · [04 AI Rules](04-ai-rules.md) · [05 Decisions](05-decisions.md) |
 
 | Phase | Theme | Status |
@@ -12,7 +12,8 @@
 | 1 | Core loader: four sources, MSSQL sink, metadata, scheduling, ops endpoints | ✅ Complete |
 | 2 | Engineering quality: AI-rules compliance, tests, defect fixes, observability | ✅ Substantially complete (CI/test gates → Phase 2.1) |
 | 2.1 | Integration suites, coverage ≥ 80 %, lint gate, remaining DI/godoc | ⬜ Deferred backlog |
-| 3 | Remote configuration API with schema discovery and top-10 preview | ⬜ Next |
+| 2.2 | Opt-in historic backfill for SQL delta loads (ADR-022 / #7) | ✅ Complete |
+| 3 | Remote configuration API with schema discovery and top-10 preview | ⬜ Planned |
 | 4 | Multiple sinks, including Microsoft Fabric | ⬜ Planned |
 
 ```mermaid
@@ -28,8 +29,10 @@ gantt
     Migrations + deploy assets         :done,    p2c, 2026-11-05, 2026-11-05
     section Phase 2.1
     Integration + coverage gates       :         p21, 2026-11-06, 14d
+    section Phase 2.2
+    Dual-cursor historic backfill      :         p22, 2026-11-09, 14d
     section Phase 3
-    ADR-014/015/016 decisions          :         p3a, after p21, 10d
+    ADR-014/015/016 decisions          :         p3a, after p22, 10d
     API foundation (auth, OpenAPI)     :         p3b, after p3a, 10d
     Config CRUD + reload               :         p3c, after p3b, 10d
     Discovery + preview                :         p3d, after p3b, 10d
@@ -182,9 +185,71 @@ Carry-over that was listed under Phase 2 but is **not** required to treat the ed
 
 ---
 
+## Phase 2.2 — Opt-in historic backfill (ADR-022 / #7) ✅
+
+**Goal:** allow an explicit, metadata-driven historic fill for SQL `delta` loads without weakening ADR-006’s safe first-run default (FR-015). Forward (parent) loads keep live catch-up; a sibling load walks history up to a frozen ceiling.
+
+**Decision locked:** [ADR-022](../ADR/0022-opt-in-historic-backfill-for-delta-loads.md) Accepted — dual-cursor via sibling `meta_loads` row (`backfill_of_load_id`), not a seed-and-catch-up single watermark, and not a hidden in-process task.
+
+**Shipped (2026-11-09):** goose `00003_backfill_columns`, `internal/backfill.Coordinator`, SQL Server/Postgres ceiling + `TOP`/`LIMIT` batching, seed YAML `backfill_required` / `backfill_stop` (sibling auto-created by coordinator), wired into runner hook + reload sequence.
+
+### 2.2.0 Schema and domain
+
+- [x] Goose migration `00003_backfill_columns.sql`: on `meta_loads` add
+  - parent: `backfill_required` (bit not null default 0), `backfill_stop` (nvarchar(100) null), `backfill_completed_at` (datetime2 null)
+  - sibling: `backfill_of_load_id` (bigint null, FK → `meta_loads.id`, unique where not null), `backfill_ceiling` (nvarchar(100) null)
+- [x] Extend `metadata.Load` + repository helpers (get sibling by parent, list enabled including/excluding siblings as needed).
+- [x] Domain validation (pure functions): backfill only when `mode=delta`, SQL source kinds (`sqlserver`/`postgres`), watermark type/column present; reject telemetry; `backfill_stop` format matches `watermark_type` when set.
+- [x] Naming convention for sibling `name` (e.g. `{parent.name}#backfill`) enforced unique.
+
+### 2.2.1 Lifecycle service
+
+- [x] `BackfillCoordinator` (application layer): on metadata load/reload and after successful parent first-run init:
+  1. If parent `backfill_required` and no sibling → create sibling disabled, copy mapping/`batch_size`, compute cron +1m offset.
+  2. If parent has watermark and sibling exists without ceiling → set `backfill_ceiling` = parent WM, seed sibling WM to resolved `backfill_stop` (call source `MIN` once when stop empty, persist concrete stop on parent), enable sibling.
+  3. If sibling WM `>= backfill_ceiling` after a successful run → disable sibling, clear parent `backfill_required`, set `backfill_completed_at`, log audit reason.
+- [x] Idempotent across hot reload (ADR-009) and process restart; never create a second sibling for the same parent while one exists.
+- [x] Re-entry: `backfill_required` flipped back to 1 after completion creates/resets sibling with a **new** ceiling snapshot (explicit only).
+
+### 2.2.2 Read path
+
+- [x] SQL Server and PostgreSQL delta reads honour an optional **ceiling**:  
+  `wm > last AND wm <= min(snapshot_upper, ceiling)` when `backfill_ceiling` is set on the load.
+- [x] Parent path unchanged when ceiling is null (ADR-006).
+- [x] Resolve empty `backfill_stop` via `MIN(watermark_column)` (lossless string form, same approach as MAX / D-03).
+- [x] Cap rows per tick with existing `batch_size`; no special unlimited mode.
+
+### 2.2.3 Scheduling and ops
+
+- [x] Scheduler continues to treat sibling as a normal load (own overlap guard, own `meta_load_runs`).
+- [x] Document ADR-021 interaction: parent + sibling sharing `source_id` serialize on the pool lease.
+- [x] Seed YAML: accept parent backfill fields; sibling auto-created via coordinator on sync/reload (not authored in YAML).
+- [x] Runbook: how to request backfill, monitor sibling runs, cancel (disable sibling / clear flag), and re-entry after completion.
+
+### 2.2.4 Tests and docs
+
+- [x] Unit: coordinator create / activate / complete / idempotent reload; cron offset helper; validation matrix (telemetry rejected, replace rejected).
+- [x] Unit: ceiling clamp helpers — completion when `last >= ceiling`; min(upper, ceiling).
+- [x] Unit: parent first-run still loads 0 rows when ceiling unset (BR-003 / ADR-006 path unchanged in sources).
+- [ ] Integration (Phase 2.1 suite): parent + sibling against SQL Server container, historic window then live inserts.
+- [x] Update [01](01-project-requirements.md) FR-015 status, [02](02-architecture.md) data model + Rule 1, modules/runbook.
+- [ ] Close GitHub #7 when merged.
+
+### Phase 2.2 exit criteria
+
+| # | Criterion | Status |
+|---|-----------|--------|
+| 1 | ADR-022 behaviour implemented for SQL Server and PostgreSQL delta loads | ✅ |
+| 2 | Parent without `backfill_required` unchanged (first-run MAX, 0 rows) | ✅ |
+| 3 | Sibling auto-deschedules at ceiling; parent `backfill_completed_at` set | ✅ |
+| 4 | `go test -race ./...` green; new regressions named for ADR-022 / #7 | ✅ |
+| 5 | Docs (01/02/modules/runbook) and goose migration landed | ✅ |
+
+---
+
 ## Phase 3 — Remote configuration API
 
-**Goal:** a separate application can fully manage sources and loads, discover source schemas, and preview the top 10 rows (FR-020 to FR-026).
+**Goal:** a separate application can fully manage sources and loads, discover source schemas, and preview the top 10 rows (FR-020 to FR-026). Phase 3 Load CRUD must validate and expose ADR-022 backfill fields (see 3.2).
 
 ### 3.0 Decisions before code
 
@@ -205,7 +270,7 @@ Carry-over that was listed under Phase 2 but is **not** required to treat the ed
 
 - [ ] Source-kind registry with a JSON Schema for each kind's params (`GET /source-kinds`). Validation shares that schema.
 - [ ] Source CRUD with write-only secrets (ADR-016).
-- [ ] Load CRUD with validation: cron (`cron.ParseStandard` plus descriptors), mode/watermark consistency, identifier validation (D-07), and target collisions (two loads writing the same target with `replace`).
+- [ ] Load CRUD with validation: cron (`cron.ParseStandard` plus descriptors), mode/watermark consistency, identifier validation (D-07), target collisions (two loads writing the same target with `replace`), and ADR-022 backfill fields (`backfill_required` / `backfill_stop`; reject on telemetry or non-delta; do not allow clients to forge `backfill_of_load_id` / `backfill_ceiling` — coordinator-owned).
 - [ ] Atomic replacement of Modbus tag and OPC UA node lists.
 - [ ] An application service that wraps repository writes and calls `Scheduler.Reload(ctx)` synchronously before responding.
 - [ ] Converge seeding and the API on the same application service, so `cmd/seed` and the API share validation.

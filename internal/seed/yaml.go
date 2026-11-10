@@ -37,6 +37,9 @@ type LoadSpec struct {
 	BatchSize       int    `yaml:"batch_size"`
 	AutoCreateTable *bool  `yaml:"auto_create_table"`
 	IsEnabled       *bool  `yaml:"is_enabled"`
+	// ADR-022: parent opt-in; sibling rows are created by BackfillCoordinator.
+	BackfillRequired *bool  `yaml:"backfill_required"`
+	BackfillStop     string `yaml:"backfill_stop"`
 }
 
 type ModbusTagSpec struct {

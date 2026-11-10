@@ -3,12 +3,12 @@
 | Item | Value |
 |------|-------|
 | Document | 05 – Architectural Decision Records (index) |
-| Last updated | 2026-11-05 |
+| Last updated | 2026-11-09 |
 | Related | [01 Requirements](01-project-requirements.md) · [02 Architecture](02-architecture.md) · [03 Implementation Plan](03-implementation-plan.md) · [04 AI Rules](04-ai-rules.md) |
 
 Each decision lives in its own file under [`ADR/`](../ADR/) so the design indexer and the ADR server (`find_decision`, `list_adrs`, `get_adr`) can index it individually. This page is only the index.
 
-The Phase 1 decisions were made while the loader was being built (from 2026-09-16) and are recorded retroactively (2026-10-14). Phase 2 acceptances on 2026-11-05: ADR-012 (goose; supersedes ADR-011), ADR-020 (atomic replace), ADR-021 (opt-in source pool). Remaining Phase 3–4 decisions are still **Proposed** and need review before implementation (see [04 AI Rules](04-ai-rules.md#workflow-for-ai-agents)).
+The Phase 1 decisions were made while the loader was being built (from 2026-09-16) and are recorded retroactively (2026-10-14). Phase 2 acceptances on 2026-11-05: ADR-012 (goose; supersedes ADR-011), ADR-020 (atomic replace), ADR-021 (opt-in source pool). ADR-022 (opt-in historic backfill, dual-cursor) accepted 2026-11-09 — implement in Phase 2.2. Remaining Phase 3–4 decisions are still **Proposed** and need review before implementation (see [04 AI Rules](04-ai-rules.md#workflow-for-ai-agents)).
 
 ## Index
 
@@ -35,6 +35,7 @@ The Phase 1 decisions were made while the loader was being built (from 2026-09-1
 | [ADR-019](../ADR/0019-microsoft-fabric-through-an-open-mirroring-landing-zone.md) | Microsoft Fabric through an Open Mirroring landing zone | Proposed — spike required | 4 |
 | [ADR-020](../ADR/0020-atomic-replace-through-a-staging-table-and-swap.md) | Atomic `replace` through a staging table and swap (D-05) | Accepted | 2 |
 | [ADR-021](../ADR/0021-source-connection-reuse-across-runs.md) | Source connection reuse across runs (D-17) | Accepted | 2 |
+| [ADR-022](../ADR/0022-opt-in-historic-backfill-for-delta-loads.md) | Opt-in historic backfill for SQL delta loads (#7) | Accepted | 2.2 |
 
 ## Writing a new ADR
 

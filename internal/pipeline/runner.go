@@ -15,6 +15,12 @@ import (
 	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
+// BackfillHook is notified after a successful run so ADR-022 can activate or
+// complete sibling loads. Optional; nil is fine.
+type BackfillHook interface {
+	AfterSuccessfulRun(ctx context.Context, load metadata.Load) error
+}
+
 // Runner executes a single load against a Source and Sink.
 type Runner struct {
 	repo      RunStore
@@ -23,6 +29,7 @@ type Runner struct {
 	state     *runstate.Registry
 	logger    *slog.Logger
 	sessions  SourceSession
+	backfill  BackfillHook
 }
 
 // NewRunner wires the production source registry as the SourceBuilder.
@@ -44,6 +51,11 @@ func NewRunnerWithBuilder(repo RunStore, telemetry contracts.TelemetryCatalog, s
 		sessions = NewEphemeral(build)
 	}
 	return &Runner{repo: repo, telemetry: telemetry, sink: sink, state: state, logger: logger, sessions: sessions}
+}
+
+// SetBackfillHook registers the ADR-022 lifecycle hook (may be nil).
+func (r *Runner) SetBackfillHook(h BackfillHook) {
+	r.backfill = h
 }
 
 // Execute runs one load end-to-end.
@@ -167,14 +179,15 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 	}
 
 	loadCfg := contracts.LoadConfig{
-		LoadID:          load.ID,
-		Name:            load.Name,
-		ObjectName:      load.ObjectName,
-		Mode:            mode,
-		WatermarkColumn: load.WatermarkColumn,
-		WatermarkType:   contracts.WatermarkType(load.WatermarkType),
-		LastWatermark:   current,
-		BatchSize:       load.BatchSize,
+		LoadID:           load.ID,
+		Name:             load.Name,
+		ObjectName:       load.ObjectName,
+		Mode:             mode,
+		WatermarkColumn:  load.WatermarkColumn,
+		WatermarkType:    contracts.WatermarkType(load.WatermarkType),
+		LastWatermark:    current,
+		BatchSize:        load.BatchSize,
+		WatermarkCeiling: load.BackfillCeiling,
 	}
 	result, err := src.Read(ctx, loadCfg, handler)
 	if err != nil {
@@ -244,5 +257,11 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 		"rows_written", rowsWritten,
 		"duration_ms", time.Since(run.StartedAt).Milliseconds(),
 	)
+	if r.backfill != nil {
+		if err := r.backfill.AfterSuccessfulRun(ctx, load); err != nil {
+			log.Error("backfill hook", "category", "watermark", "err", err)
+			return fmt.Errorf("backfill hook: %w", err)
+		}
+	}
 	return nil
 }

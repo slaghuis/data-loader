@@ -48,6 +48,14 @@ type Load struct {
 	CronExpression string `gorm:"size:100;not null"`
 	IsEnabled      bool   `gorm:"not null;default:1"`
 
+	// Opt-in historic backfill (ADR-022). Parent rows set BackfillRequired;
+	// the sibling row sets BackfillOfLoadID and BackfillCeiling.
+	BackfillRequired    bool       `gorm:"not null;default:0"`
+	BackfillStop        string     `gorm:"size:100"`
+	BackfillCompletedAt *time.Time `gorm:""`
+	BackfillOfLoadID    *int64     `gorm:"uniqueIndex:ux_meta_loads_backfill_of_load_id"`
+	BackfillCeiling     string     `gorm:"size:100"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`

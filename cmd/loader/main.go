@@ -11,6 +11,7 @@ import (
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
 
+	"github.com/slaghuis/data-loader/internal/backfill"
 	"github.com/slaghuis/data-loader/internal/config"
 	"github.com/slaghuis/data-loader/internal/health"
 	"github.com/slaghuis/data-loader/internal/housekeeping"
@@ -112,6 +113,15 @@ func runServer() int {
 
 	// Pipeline & Scheduler (repo satisfies TelemetryCatalog for modbus/opcua).
 	runner := pipeline.NewRunner(repo, repo, sk, state, appLogger, sessions)
+	bf := backfill.NewCoordinator(repo, &backfill.SourceMinResolver{
+		Build:     sources.Build,
+		Telemetry: repo,
+	}, appLogger)
+	runner.SetBackfillHook(bf)
+	if err := bf.Sync(ctx); err != nil {
+		appLogger.Error("backfill sync", "err", err)
+		return 1
+	}
 	sch := scheduler.New(repo, runner, state, appLogger,
 		time.Duration(cfg.ShutdownTimeoutSec)*time.Second)
 	if err := sch.Load(ctx); err != nil {
@@ -138,13 +148,14 @@ func runServer() int {
 		}
 	}
 
-	// Metadata reload coordinator (invalidate pooled sources after reload).
+	// Metadata reload coordinator: backfill sync → scheduler; invalidate pooled sources.
 	var reloader *reload.Coordinator
 	if cfg.ReloadEnabled {
-		var reloadTarget reload.Reloader = sch
+		seq := &reload.Sequence{Steps: []reload.Reloader{bf, sch}}
+		var reloadTarget reload.Reloader = seq
 		if pool != nil {
 			reloadTarget = &reload.Fanout{
-				Primary: sch,
+				Primary: seq,
 				After:   []func(){pool.InvalidateAll},
 			}
 		}

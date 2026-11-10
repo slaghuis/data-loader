@@ -69,11 +69,13 @@ func (s *Source) Close() error {
 func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler contracts.BatchHandler) (contracts.ReadResult, error) {
 	result := contracts.ReadResult{StartedAt: time.Now().UTC()}
 
-	// Delta first-run: seed watermark, read nothing.
+	// Delta first-run: seed watermark, read nothing (ADR-006). Skip when a
+	// backfill ceiling is set — sibling cursors are pre-seeded (ADR-022).
 	if load.Mode == contracts.LoadModeDelta &&
 		load.WatermarkColumn != "" &&
 		load.WatermarkType != contracts.WatermarkNone &&
-		load.LastWatermark.Value == "" {
+		load.LastWatermark.Value == "" &&
+		load.WatermarkCeiling == "" {
 
 		obj, err := quoteObject(load.ObjectName)
 		if err != nil {
@@ -89,7 +91,19 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 		return result, nil
 	}
 
-	query, args, newWM, err := s.buildQuery(ctx, load)
+	if load.WatermarkCeiling != "" {
+		cmp, err := contracts.CompareWatermark(load.WatermarkType, load.LastWatermark.Value, load.WatermarkCeiling)
+		if err != nil {
+			return result, err
+		}
+		if cmp >= 0 {
+			result.NewWatermark = contracts.Watermark{Type: load.WatermarkType, Value: load.WatermarkCeiling}
+			result.FinishedAt = time.Now().UTC()
+			return result, nil
+		}
+	}
+
+	query, args, newWM, limited, err := s.buildQuery(ctx, load)
 	if err != nil {
 		return result, err
 	}
@@ -121,6 +135,7 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 
 	batch := contracts.Batch{Columns: columns, Rows: make([]contracts.Row, 0, batchSize)}
 	var rowsRead int64
+	var lastWM string
 
 	for rows.Next() {
 		holders := make([]any, len(columns))
@@ -134,6 +149,11 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 		row := make(contracts.Row, len(columns))
 		for i, c := range columns {
 			row[c.Name] = normalizeValue(holders[i], c.DataType)
+		}
+		if limited {
+			if v, ok := rowValueCI(row, load.WatermarkColumn); ok {
+				lastWM = formatCellWatermark(v, load.WatermarkType)
+			}
 		}
 		batch.Rows = append(batch.Rows, row)
 		rowsRead++
@@ -157,6 +177,14 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 	result.RowsRead = rowsRead
 	result.FinishedAt = time.Now().UTC()
 	result.NewWatermark = newWM
+	if limited {
+		if lastWM != "" {
+			result.NewWatermark = contracts.Watermark{Type: load.WatermarkType, Value: lastWM}
+		} else if rowsRead == 0 {
+			// Caught up to effective upper (possibly the ceiling).
+			result.NewWatermark = newWM
+		}
+	}
 	return result, nil
 }
 
@@ -165,39 +193,105 @@ func (s *Source) Read(ctx context.Context, load contracts.LoadConfig, handler co
 //
 // Correctness pattern: we snapshot "now" (or MAX(wm)) BEFORE reading, so any
 // rows inserted mid-load with a higher watermark are picked up on the next run.
-func (s *Source) buildQuery(ctx context.Context, load contracts.LoadConfig) (string, []any, contracts.Watermark, error) {
+// When WatermarkCeiling is set (ADR-022 backfill), the upper bound is clamped
+// and TOP(batch_size) limits rows per tick (limited=true).
+func (s *Source) buildQuery(ctx context.Context, load contracts.LoadConfig) (string, []any, contracts.Watermark, bool, error) {
 	obj, err := quoteObject(load.ObjectName)
 	if err != nil {
-		return "", nil, contracts.Watermark{}, err
+		return "", nil, contracts.Watermark{}, false, err
 	}
 
 	// Full-load modes: no watermark filtering.
 	if load.Mode == contracts.LoadModeAppend || load.Mode == contracts.LoadModeReplace {
 		q := fmt.Sprintf("SELECT * FROM %s", obj)
-		return q, nil, contracts.Watermark{Type: contracts.WatermarkNone}, nil
+		return q, nil, contracts.Watermark{Type: contracts.WatermarkNone}, false, nil
 	}
 
 	// Delta mode requires a watermark column.
 	if load.WatermarkColumn == "" || load.WatermarkType == contracts.WatermarkNone {
-		return "", nil, contracts.Watermark{}, fmt.Errorf("delta load requires watermark column and type")
+		return "", nil, contracts.Watermark{}, false, fmt.Errorf("delta load requires watermark column and type")
 	}
 	if err := sqlident.Validate(load.WatermarkColumn); err != nil {
-		return "", nil, contracts.Watermark{}, fmt.Errorf("watermark column: %w", err)
+		return "", nil, contracts.Watermark{}, false, fmt.Errorf("watermark column: %w", err)
 	}
 	wmCol := sqlident.QuoteMSSQL(load.WatermarkColumn)
 
 	// Determine upper bound BEFORE reading data.
 	upper, err := s.currentMaxWatermark(ctx, obj, load.WatermarkColumn, load.WatermarkType)
 	if err != nil {
-		return "", nil, contracts.Watermark{}, err
+		return "", nil, contracts.Watermark{}, false, err
+	}
+	if load.WatermarkCeiling != "" {
+		clamped, err := contracts.MinWatermark(load.WatermarkType, upper.Value, load.WatermarkCeiling)
+		if err != nil {
+			return "", nil, contracts.Watermark{}, false, err
+		}
+		upper.Value = clamped
 	}
 
-	// First-run is handled in Read before buildQuery is called.
+	batchSize := load.BatchSize
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
+	if load.WatermarkCeiling != "" {
+		q := fmt.Sprintf(
+			"SELECT TOP (@p3) * FROM %s WHERE %s > @p1 AND %s <= @p2 ORDER BY %s",
+			obj, wmCol, wmCol, wmCol,
+		)
+		return q, []any{load.LastWatermark.Value, upper.Value, batchSize}, upper, true, nil
+	}
+
 	q := fmt.Sprintf(
 		"SELECT * FROM %s WHERE %s > @p1 AND %s <= @p2 ORDER BY %s",
 		obj, wmCol, wmCol, wmCol,
 	)
-	return q, []any{load.LastWatermark.Value, upper.Value}, upper, nil
+	return q, []any{load.LastWatermark.Value, upper.Value}, upper, false, nil
+}
+
+// CurrentMinWatermark returns MIN(watermark_column) as a string (ADR-022 empty stop).
+func (s *Source) CurrentMinWatermark(ctx context.Context, objectName, column string, wmType contracts.WatermarkType) (contracts.Watermark, error) {
+	obj, err := quoteObject(objectName)
+	if err != nil {
+		return contracts.Watermark{}, err
+	}
+	return s.currentMinWatermark(ctx, obj, column, wmType)
+}
+
+func (s *Source) currentMinWatermark(ctx context.Context, obj, col string, wmType contracts.WatermarkType) (contracts.Watermark, error) {
+	if err := sqlident.Validate(col); err != nil {
+		return contracts.Watermark{}, fmt.Errorf("watermark column: %w", err)
+	}
+	quoted := sqlident.QuoteMSSQL(col)
+	switch wmType {
+	case contracts.WatermarkDatetime:
+		q := fmt.Sprintf("SELECT MIN(%s) FROM %s", quoted, obj)
+		var t sql.NullTime
+		if err := s.db.QueryRowContext(ctx, q).Scan(&t); err != nil {
+			return contracts.Watermark{}, err
+		}
+		if !t.Valid {
+			return contracts.Watermark{Type: wmType, Value: ""}, nil
+		}
+		return contracts.Watermark{Type: wmType, Value: t.Time.UTC().Format(time.RFC3339Nano)}, nil
+	case contracts.WatermarkNumeric:
+		q := fmt.Sprintf("SELECT CONVERT(varchar(40), MIN(%s)) FROM %s", quoted, obj)
+		var raw sql.NullString
+		if err := s.db.QueryRowContext(ctx, q).Scan(&raw); err != nil {
+			return contracts.Watermark{}, err
+		}
+		if !raw.Valid {
+			return contracts.Watermark{Type: wmType, Value: ""}, nil
+		}
+		return contracts.Watermark{Type: wmType, Value: strings.TrimSpace(raw.String)}, nil
+	default:
+		q := fmt.Sprintf("SELECT CONVERT(varchar(400), MIN(%s)) FROM %s", quoted, obj)
+		var raw sql.NullString
+		if err := s.db.QueryRowContext(ctx, q).Scan(&raw); err != nil {
+			return contracts.Watermark{}, err
+		}
+		return contracts.Watermark{Type: wmType, Value: raw.String}, nil
+	}
 }
 
 // currentMaxWatermark returns MAX(watermark_column) as a string.
@@ -386,4 +480,47 @@ func formatMSSQLGUID(b []byte) (string, error) {
 	}
 	return fmt.Sprintf("%08X-%04X-%04X-%04X-%012X",
 		g[0:4], g[4:6], g[6:8], g[8:10], g[10:16]), nil
+}
+
+func rowValueCI(row contracts.Row, name string) (any, bool) {
+	if v, ok := row[name]; ok {
+		return v, true
+	}
+	want := strings.EqualFold
+	for k, v := range row {
+		if want(k, name) {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+func formatCellWatermark(v any, typ contracts.WatermarkType) string {
+	if v == nil {
+		return ""
+	}
+	switch typ {
+	case contracts.WatermarkDatetime:
+		switch t := v.(type) {
+		case time.Time:
+			return t.UTC().Format(time.RFC3339Nano)
+		case string:
+			return t
+		default:
+			return fmt.Sprintf("%v", v)
+		}
+	default:
+		switch x := v.(type) {
+		case string:
+			return x
+		case []byte:
+			return string(x)
+		case int64:
+			return strconv.FormatInt(x, 10)
+		case float64:
+			return strconv.FormatFloat(x, 'f', -1, 64)
+		default:
+			return fmt.Sprintf("%v", v)
+		}
+	}
 }
