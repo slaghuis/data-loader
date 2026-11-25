@@ -4,7 +4,7 @@
 |------|-------|
 | Document | 02 – Architecture |
 | Version | 1.0 |
-| Last updated | 2026-11-09 |
+| Last updated | 2026-11-25 |
 | Related | [01 Requirements](01-project-requirements.md) · [03 Implementation Plan](03-implementation-plan.md) · [04 AI Rules](04-ai-rules.md) · [05 Decisions](05-decisions.md) |
 
 Sections marked **(as built)** describe the Phase 1 code. Sections marked **(target)** describe the Phase 2–4 design.
@@ -364,6 +364,7 @@ erDiagram
         nvarchar mode
         nvarchar watermark_column
         nvarchar watermark_type
+        int watermark_overlap_sec
         int batch_size
         bit auto_create_table
         nvarchar cron_expression
@@ -465,7 +466,7 @@ id, name, kind, description, params_json, is_enabled, created_at, updated_at, de
 meta_loads
 ----------
 id, source_id, name, object_name, target_schema, target_table, mode, watermark_column,
-watermark_type, batch_size, auto_create_table, cron_expression, is_enabled,
+watermark_type, watermark_overlap_sec, batch_size, auto_create_table, cron_expression, is_enabled,
 backfill_required, backfill_stop, backfill_completed_at, backfill_of_load_id, backfill_ceiling,
 timestamps
 ```
@@ -482,6 +483,7 @@ timestamps
 | mode | nvarchar(20) | `delta` \| `append` \| `replace` |
 | watermark_column | nvarchar(200) | Required for `delta` |
 | watermark_type | nvarchar(20), default `none` | `none` \| `datetime` \| `numeric` |
+| watermark_overlap_sec | int, default 0 | ADR-023: rewind query lower bound (datetime delta); max 604800 |
 | batch_size | int, default 1000 | Rows per batch handed to the sink |
 | auto_create_table | bit, default 1 | Create target on first batch if missing |
 | cron_expression | nvarchar(100) | robfig/cron v3 (`@every 5m`, `0 */2 * * *`) |

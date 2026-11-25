@@ -4,7 +4,7 @@
 |------|-------|
 | Document | 03 – Implementation Plan |
 | Version | 1.3 |
-| Last updated | 2026-11-09 |
+| Last updated | 2026-11-25 |
 | Related | [01 Requirements](01-project-requirements.md) · [02 Architecture](02-architecture.md) · [04 AI Rules](04-ai-rules.md) · [05 Decisions](05-decisions.md) |
 
 | Phase | Theme | Status |
@@ -13,6 +13,7 @@
 | 2 | Engineering quality: AI-rules compliance, tests, defect fixes, observability | ✅ Substantially complete (CI/test gates → Phase 2.1) |
 | 2.1 | Integration suites, coverage ≥ 80 %, lint gate, remaining DI/godoc | ⬜ Deferred backlog |
 | 2.2 | Opt-in historic backfill for SQL delta loads (ADR-022 / #7) | ✅ Complete |
+| 2.3 | Opt-in datetime watermark overlap (ADR-023 / #9) | ✅ Complete |
 | 3 | Remote configuration API with schema discovery and top-10 preview | ⬜ Planned |
 | 4 | Multiple sinks, including Microsoft Fabric | ⬜ Planned |
 
@@ -336,6 +337,15 @@ Carry-over that was listed under Phase 2 but is **not** required to treat the ed
 1. US-006 automated against a Fabric test workspace (nightly).
 2. Loads with only a `local` target behave identically to Phase 3 (regression suite).
 3. ADR-018 and ADR-019 Accepted.
+
+---
+
+## Phase 2.3 — Datetime watermark overlap (ADR-023 / #9) ✅
+
+- [x] Accept ADR-023; goose `00004_watermark_overlap_sec`.
+- [x] Query lower-bound rewind for SQL Server/Postgres datetime delta; stored WM still advances to upper.
+- [x] Validation (datetime delta only, max 7 days, siblings force 0); seed YAML; fingerprint.
+- [x] Docs (FR-004, architecture, runbook, modules). Close #9 on merge.
 
 ---
 

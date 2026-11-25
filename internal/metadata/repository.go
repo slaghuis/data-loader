@@ -276,6 +276,7 @@ func (r *Repository) MetadataFingerprint(ctx context.Context) (string, error) {
 		BackfillOfLoadID    *int64
 		BackfillCeiling     string
 		BackfillCompletedAt *time.Time
+		WatermarkOverlapSec int
 	}
 
 	var sources []sourceFP
@@ -290,7 +291,7 @@ func (r *Repository) MetadataFingerprint(ctx context.Context) (string, error) {
 	var loads []loadFP
 	if err := r.db.WithContext(ctx).
 		Model(&Load{}).
-		Select("id, source_id, cron_expression, mode, watermark_column, watermark_type, object_name, target_schema, target_table, batch_size, auto_create_table, is_enabled, backfill_required, backfill_stop, backfill_of_load_id, backfill_ceiling, backfill_completed_at").
+		Select("id, source_id, cron_expression, mode, watermark_column, watermark_type, object_name, target_schema, target_table, batch_size, auto_create_table, is_enabled, backfill_required, backfill_stop, backfill_of_load_id, backfill_ceiling, backfill_completed_at, watermark_overlap_sec").
 		Order("id").
 		Scan(&loads).Error; err != nil {
 		return "", fmt.Errorf("fingerprint loads: %w", err)

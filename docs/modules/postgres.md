@@ -8,6 +8,7 @@ Reads tables/views from PostgreSQL via pgx. Supports `append`, `replace`, and `d
 - `NUMERIC`/`JSONB` land as text in the MSSQL sink; timestamps are normalized to UTC.
 - Delta uses the same upper-bound snapshot pattern as SQL Server (`> $1 AND <= $2`).
 - Historic backfill siblings (ADR-022) clamp to `WatermarkCeiling` and apply `LIMIT batch_size` per tick.
+- Datetime `watermark_overlap_sec` (ADR-023) rewinds the query lower bound only; ignored under a backfill ceiling.
 
 ## Params
 

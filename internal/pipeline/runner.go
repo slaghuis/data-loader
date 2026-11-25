@@ -77,6 +77,10 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 		load.WatermarkColumn = ""
 		load.WatermarkType = string(contracts.WatermarkNone)
 	}
+	if err := contracts.ValidateWatermarkOverlap(load.Mode, contracts.WatermarkType(load.WatermarkType), load.WatermarkOverlapSec, load.BackfillOfLoadID != nil); err != nil {
+		log.Error("invalid watermark overlap", "category", "watermark", "err", err)
+		return err
+	}
 
 	params, err := config.ResolveParams(load.Source.ParamsJSON)
 	if err != nil {
@@ -179,15 +183,16 @@ func (r *Runner) Execute(ctx context.Context, load metadata.Load) error {
 	}
 
 	loadCfg := contracts.LoadConfig{
-		LoadID:           load.ID,
-		Name:             load.Name,
-		ObjectName:       load.ObjectName,
-		Mode:             mode,
-		WatermarkColumn:  load.WatermarkColumn,
-		WatermarkType:    contracts.WatermarkType(load.WatermarkType),
-		LastWatermark:    current,
-		BatchSize:        load.BatchSize,
-		WatermarkCeiling: load.BackfillCeiling,
+		LoadID:              load.ID,
+		Name:                load.Name,
+		ObjectName:          load.ObjectName,
+		Mode:                mode,
+		WatermarkColumn:     load.WatermarkColumn,
+		WatermarkType:       contracts.WatermarkType(load.WatermarkType),
+		LastWatermark:       current,
+		BatchSize:           load.BatchSize,
+		WatermarkCeiling:    load.BackfillCeiling,
+		WatermarkOverlapSec: load.WatermarkOverlapSec,
 	}
 	result, err := src.Read(ctx, loadCfg, handler)
 	if err != nil {

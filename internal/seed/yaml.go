@@ -40,6 +40,8 @@ type LoadSpec struct {
 	// ADR-022: parent opt-in; sibling rows are created by BackfillCoordinator.
 	BackfillRequired *bool  `yaml:"backfill_required"`
 	BackfillStop     string `yaml:"backfill_stop"`
+	// ADR-023: query lower-bound rewind in seconds (datetime delta only).
+	WatermarkOverlapSec *int `yaml:"watermark_overlap_sec"`
 }
 
 type ModbusTagSpec struct {

@@ -234,19 +234,28 @@ func (s *Source) buildQuery(ctx context.Context, load contracts.LoadConfig) (str
 		batchSize = 1000
 	}
 
+	lower := load.LastWatermark.Value
+	if sec := contracts.EffectiveOverlapSec(load.WatermarkOverlapSec, load.WatermarkCeiling); sec > 0 {
+		var err error
+		lower, err = contracts.LowerBoundWithOverlap(lower, load.WatermarkType, sec)
+		if err != nil {
+			return "", nil, contracts.Watermark{}, false, err
+		}
+	}
+
 	if load.WatermarkCeiling != "" {
 		q := fmt.Sprintf(
 			"SELECT TOP (@p3) * FROM %s WHERE %s > @p1 AND %s <= @p2 ORDER BY %s",
 			obj, wmCol, wmCol, wmCol,
 		)
-		return q, []any{load.LastWatermark.Value, upper.Value, batchSize}, upper, true, nil
+		return q, []any{lower, upper.Value, batchSize}, upper, true, nil
 	}
 
 	q := fmt.Sprintf(
 		"SELECT * FROM %s WHERE %s > @p1 AND %s <= @p2 ORDER BY %s",
 		obj, wmCol, wmCol, wmCol,
 	)
-	return q, []any{load.LastWatermark.Value, upper.Value}, upper, false, nil
+	return q, []any{lower, upper.Value}, upper, false, nil
 }
 
 // CurrentMinWatermark returns MIN(watermark_column) as a string (ADR-022 empty stop).

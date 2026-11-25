@@ -195,13 +195,14 @@ Load only rows that are new since the last successful run, based on a datetime o
 ### Inputs
 
 - `mode = delta`, `watermark_column`, `watermark_type` (`datetime` | `numeric`), the stored watermark from `meta_watermarks`.
+- Optional `watermark_overlap_sec` (ADR-023): non-negative seconds, default `0`, max 7 days; datetime delta only.
 
 ### Processing
 
-1. **First run** (no stored watermark): read `MAX(watermark_column)` from the source, store it, and load **no rows** (protects BR-003). Logged as `watermark initialized (first run, no rows loaded)`.
+1. **First run** (no stored watermark): read `MAX(watermark_column)` from the source, store it, and load **no rows** (protects BR-003). Logged as `watermark initialized (first run, no rows loaded)`. Overlap does not apply.
 2. **Subsequent runs**:
-   - *SQL Server*: snapshot the upper bound `MAX(wm)` **before** reading, then read `wm > last AND wm <= upper ORDER BY wm`. Rows inserted during the read are picked up next time.
-   - *PostgreSQL*: read `wm > last ORDER BY wm`; the new watermark is the value from the last row read.
+   - Snapshot the upper bound `MAX(wm)` **before** reading, then read `wm > lower AND wm <= upper ORDER BY wm`, where `lower` is `last` or `last − watermark_overlap_sec` for datetime overlap (ADR-023). Rows inserted during the read are picked up next time.
+   - Overlap re-reads rows in the window and **may duplicate** sink rows; the stored watermark still advances to `upper`.
 3. After a successful write, upsert the watermark and keep the previous value for audit.
 
 ### Outputs

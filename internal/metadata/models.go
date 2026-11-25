@@ -40,6 +40,8 @@ type Load struct {
 	Mode            string `gorm:"size:20;not null"` // delta | append | replace
 	WatermarkColumn string `gorm:"size:200"`
 	WatermarkType   string `gorm:"size:20;not null;default:none"` // none | datetime | numeric
+	// WatermarkOverlapSec rewinds the delta query lower bound only (ADR-023).
+	WatermarkOverlapSec int `gorm:"not null;default:0"`
 
 	BatchSize       int  `gorm:"not null;default:1000"`
 	AutoCreateTable bool `gorm:"not null;default:1"`

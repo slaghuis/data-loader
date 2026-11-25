@@ -29,6 +29,16 @@ WHERE load_id = <id>;
 
 Do not delete the watermark row unless you intend a first-run init (seed `MAX`, load no rows).
 
+## Watermark overlap (ADR-023)
+
+For datetime delta loads that may see late-arriving or updated rows, set `watermark_overlap_sec` on the parent load (seed YAML or SQL). The query lower bound becomes `last − overlap`; the stored high-water mark still advances forward. Expect **duplicate** sink rows in the window — de-duplicate downstream with business keys / `yb_load_timestamp`. Cap is 7 days (`604800`). Ignored on ADR-022 backfill siblings. Default `0` leaves behaviour unchanged.
+
+```yaml
+mode: delta
+watermark_type: datetime
+watermark_overlap_sec: 300
+```
+
 ## Historic backfill (ADR-022)
 
 Opt-in dual-cursor fill for SQL `delta` loads. Prefer this over a manual rewind when you need history **and** live catch-up at the same time.

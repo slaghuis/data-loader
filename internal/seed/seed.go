@@ -11,6 +11,7 @@ import (
 
 	"github.com/slaghuis/data-loader/internal/backfill"
 	"github.com/slaghuis/data-loader/internal/metadata"
+	"github.com/slaghuis/data-loader/pkg/contracts"
 )
 
 // Apply reconciles the seed file against the metadata store.
@@ -81,6 +82,9 @@ func Apply(ctx context.Context, db *gorm.DB, f *File) (Report, error) {
 				return fmt.Errorf("load %q: %w", spec.Name, err)
 			}
 			if err := backfill.ValidateParent(*l, src.Kind); err != nil {
+				return fmt.Errorf("load %q: %w", spec.Name, err)
+			}
+			if err := contracts.ValidateWatermarkOverlap(l.Mode, contracts.WatermarkType(l.WatermarkType), l.WatermarkOverlapSec, l.BackfillOfLoadID != nil); err != nil {
 				return fmt.Errorf("load %q: %w", spec.Name, err)
 			}
 			rep.recordLoad(action, spec.Name)
@@ -154,20 +158,21 @@ func upsertLoad(tx *gorm.DB, spec LoadSpec, sourceID int64) (*metadata.Load, Act
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		l = metadata.Load{
-			Name:             spec.Name,
-			SourceID:         sourceID,
-			CronExpression:   spec.CronExpression,
-			Mode:             spec.Mode,
-			ObjectName:       spec.ObjectName,
-			WatermarkColumn:  spec.WatermarkColumn,
-			WatermarkType:    spec.WatermarkType,
-			TargetSchema:     spec.TargetSchema,
-			TargetTable:      spec.TargetTable,
-			BatchSize:        spec.BatchSize,
-			AutoCreateTable:  boolOr(spec.AutoCreateTable, true),
-			IsEnabled:        boolOr(spec.IsEnabled, true),
-			BackfillRequired: boolOr(spec.BackfillRequired, false),
-			BackfillStop:     spec.BackfillStop,
+			Name:                spec.Name,
+			SourceID:            sourceID,
+			CronExpression:      spec.CronExpression,
+			Mode:                spec.Mode,
+			ObjectName:          spec.ObjectName,
+			WatermarkColumn:     spec.WatermarkColumn,
+			WatermarkType:       spec.WatermarkType,
+			TargetSchema:        spec.TargetSchema,
+			TargetTable:         spec.TargetTable,
+			BatchSize:           spec.BatchSize,
+			AutoCreateTable:     boolOr(spec.AutoCreateTable, true),
+			IsEnabled:           boolOr(spec.IsEnabled, true),
+			BackfillRequired:    boolOr(spec.BackfillRequired, false),
+			BackfillStop:        spec.BackfillStop,
+			WatermarkOverlapSec: intOr(spec.WatermarkOverlapSec, 0),
 		}
 		if err := tx.Create(&l).Error; err != nil {
 			return nil, "", err
@@ -192,6 +197,9 @@ func upsertLoad(tx *gorm.DB, spec LoadSpec, sourceID int64) (*metadata.Load, Act
 		}
 		if spec.BackfillStop != "" || spec.BackfillRequired != nil {
 			l.BackfillStop = spec.BackfillStop
+		}
+		if spec.WatermarkOverlapSec != nil {
+			l.WatermarkOverlapSec = *spec.WatermarkOverlapSec
 		}
 		if err := tx.Save(&l).Error; err != nil {
 			return nil, "", err
@@ -305,6 +313,13 @@ func (r *Report) recordLoad(a Action, name string) {
 // ---- helpers ----
 
 func boolOr(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func intOr(p *int, def int) int {
 	if p == nil {
 		return def
 	}

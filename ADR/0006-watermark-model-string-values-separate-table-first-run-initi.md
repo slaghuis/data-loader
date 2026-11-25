@@ -41,4 +41,4 @@ Positive:
 Negative:
 
 - String formatting must be lossless. Phase 2 stores the database's own textual representation for numeric watermarks (D-03 / D-18).
-- Watermarks miss rows whose watermark value is lower than one already loaded (late-arriving commits). Delivery is at-least-once, with possible duplicates after a crash.
+- Watermarks miss rows whose watermark value is lower than one already loaded (late-arriving commits). Delivery is at-least-once, with possible duplicates after a crash. Opt-in datetime query overlap ([ADR-023](0023-opt-in-datetime-watermark-overlap-window.md)) re-reads a trailing window and accepts additional duplicates.

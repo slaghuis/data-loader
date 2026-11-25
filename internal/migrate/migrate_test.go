@@ -59,6 +59,7 @@ func TestBaselineAndFKMigrationNames(t *testing.T) {
 		"00001_baseline_automigrate_schema.sql":       false,
 		"00002_foreign_keys_and_run_status_index.sql": false,
 		"00003_backfill_columns.sql":                  false,
+		"00004_watermark_overlap_sec.sql":             false,
 	}
 	entries, err := fs.ReadDir(migrations.FS, ".")
 	if err != nil {

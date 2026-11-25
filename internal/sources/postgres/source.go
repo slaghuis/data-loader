@@ -289,7 +289,15 @@ func (s *Source) buildQuery(ctx context.Context, load contracts.LoadConfig) (str
 		upper.Value = clamped
 	}
 
-	last, err := parseWatermark(load.LastWatermark)
+	lowerWM := load.LastWatermark
+	if sec := contracts.EffectiveOverlapSec(load.WatermarkOverlapSec, load.WatermarkCeiling); sec > 0 {
+		lower, err := contracts.LowerBoundWithOverlap(lowerWM.Value, load.WatermarkType, sec)
+		if err != nil {
+			return "", nil, contracts.Watermark{}, false, err
+		}
+		lowerWM.Value = lower
+	}
+	last, err := parseWatermark(lowerWM)
 	if err != nil {
 		return "", nil, contracts.Watermark{}, false, err
 	}

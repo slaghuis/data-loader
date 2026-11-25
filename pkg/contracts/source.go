@@ -26,6 +26,10 @@ type LoadConfig struct {
 	// WatermarkCeiling, when non-empty, caps the delta upper bound (ADR-022
 	// sibling backfill). Reads use TOP/LIMIT BatchSize and advance by last row.
 	WatermarkCeiling string
+	// WatermarkOverlapSec rewinds the query lower bound for datetime delta
+	// (ADR-023). Ignored when WatermarkCeiling is set. Never persisted as the
+	// stored high-water mark.
+	WatermarkOverlapSec int
 }
 
 // BatchHandler is called by a Source for each batch of rows read.
